@@ -42,9 +42,13 @@
       const dir = await idbGet('dir');
       if (!dir) return null;
       const perm = await dir.queryPermission({ mode: 'readwrite' });
-      return perm === 'granted' ? dir : null;
+      if (perm !== 'granted') return null;
+      // 探测目录是否仍然存在（句柄可能指向已删除/移动的目录）
+      const it = dir.keys();
+      await it.next();
+      return dir;
     } catch (e) {
-      return null; // 句柄失效（目录被删/移动）
+      return null; // 权限不足或句柄失效
     }
   }
 
@@ -340,10 +344,19 @@
 
     const ext = G.extFromMime(blob.type) || '.png';
     const finalName = await uniqueInDir(dir, item.name, ext, taken);
-    const fh = await dir.getFileHandle(finalName, { create: true });
-    const ws = await fh.createWritable();
-    await ws.write(blob);
-    await ws.close();
+    try {
+      const fh = await dir.getFileHandle(finalName, { create: true });
+      const ws = await fh.createWritable();
+      await ws.write(blob);
+      await ws.close();
+    } catch (e) {
+      // 所选目录已不存在（被删/移动）或句柄失效：清除记忆，下次重新选择
+      if (e && (e.name === 'NotFoundError' || /could not be found/i.test(String((e && e.message) || e)))) {
+        await idbSet('dir', null).catch(() => {});
+        throw new Error('保存位置已失效，请重新下载并选择一次文件夹');
+      }
+      throw e;
+    }
     return { via: 'direct', orig: viaOriginal, native: viaNative, err };
   }
 

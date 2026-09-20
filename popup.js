@@ -461,8 +461,10 @@
           failed++;
           failedItems.push(it);
           if (!firstError) firstError = String((e && e.message) || e);
-          if (e && e.name === 'NotFoundError') {
+          if (e && (e.name === 'NotFoundError' || /保存位置已失效/.test(firstError))) {
+            hasStoredDir = false;
             await GIDLS.idbSet('dir', null).catch(() => {});
+            updateModeUi();
           }
         }
         showProgress(done + viaBrowser + failed, payload.length);
