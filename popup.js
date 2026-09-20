@@ -437,6 +437,7 @@
     let origCount = 0;
     let failed = 0;
     let firstError = '';
+    let firstAttempts = null;
     const failedItems = [];
     let idx = 0;
     const CONCURRENCY = 3;
@@ -456,6 +457,7 @@
           else {
             done++;
             if (r.orig) origCount++;
+            if (!firstAttempts && r.attempts) firstAttempts = r.attempts;
           }
         } catch (e) {
           failed++;
@@ -482,6 +484,10 @@
     if (done) parts.push(`✔ 已保存 ${done} 张到「${dir.name || '所选文件夹'}」（原图 ${origCount} · 页面图 ${done - origCount}）`);
     if (viaBrowser) parts.push(`${viaBrowser} 张改走浏览器下载（位于「下载/${dir.name}」）`);
     if (failed) parts.push(`✘ 失败 ${failed} 张`);
+    if (done > 0 && origCount === 0 && firstAttempts) {
+      const chain = firstAttempts.map((x) => `${x.layer}:${x.error}`).join(' → ');
+      if (chain) parts.push(`⚠ 原因链：${chain}`);
+    }
     els.status.textContent = parts.join('，') + (firstError ? `。首个错误：${firstError}` : '');
   }
 

@@ -145,6 +145,7 @@
     let origCount = 0;
     let failed = 0;
     let firstError = '';
+    let firstAttempts = null;
     const failedItems = [];
     let idx = 0;
     const CONCURRENCY = 3;

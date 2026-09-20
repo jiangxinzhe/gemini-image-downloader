@@ -220,6 +220,8 @@
     let viaOriginal = false;
     let viaNative = false;
     let err = '';
+    const attempts = [];
+    const note = (layer, error) => { if (error) attempts.push({ layer, error: String(error).slice(0, 80) }); };
     const deadline = Date.now() + 110000; // 单张总时限，防止个别图卡死整批
 
     const fetchAsBlob = async (u) => {
@@ -238,6 +240,7 @@
       } catch (e) {
         blob = null;
         err = String((e && e.message) || e);
+        note('弹窗直连', err);
       }
     }
 
@@ -250,6 +253,7 @@
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
+          note('后台抓取', res.error);
         }
       } catch (e) { /* keep err */ }
     }
@@ -263,6 +267,7 @@
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
+          note('页面抓取服务器原图', res.error);
         }
       } catch (e) { /* ignore */ }
     }
@@ -278,6 +283,7 @@
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
+          note('网络痕迹原图', res.error);
         }
       } catch (e) { /* ignore */ }
     }
@@ -305,6 +311,7 @@
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
+          note('页面预览', res.error);
         }
       } catch (e) { /* ignore */ }
     }
@@ -316,6 +323,7 @@
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
+          note('layer4', res.error);
         }
       } catch (e) { /* ignore */ }
     }
@@ -325,7 +333,7 @@
       const extGuess = isBlobSrc ? '' : '.png'; // blob 交由 Chrome 按类型补扩展名
       const dlPath = G.makePath(dir.name || 'Gemini图片', item.name + extGuess);
       await chrome.downloads.download({ url, filename: dlPath, conflictAction: 'uniquify' });
-      return { via: 'browser', orig: false, native: false, err };
+      return { via: 'browser', orig: false, native: false, err, attempts: attempts.slice(0, 6) };
     }
 
     // 双保险：疑似原图与页面预览比字节大小，写更大的那份（防配对错或原图反而更小）
@@ -357,7 +365,7 @@
       }
       throw e;
     }
-    return { via: 'direct', orig: viaOriginal, native: viaNative, err };
+    return { via: 'direct', orig: viaOriginal, native: viaNative, err, attempts: attempts.slice(0, 6) };
   }
 
   globalThis.GIDLS = {
