@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "GIDL Diag",
+  "version": "1.0.0",
+  "permissions": ["storage"],
+  "host_permissions": ["https://*.googleusercontent.com/*"],
+  "background": { "service_worker": "sw.js" },
+  "action": { "default_title": "GIDL Diag", "default_popup": "popup-diag.html" }
+}

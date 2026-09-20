@@ -1,0 +1,5 @@
+backup/
+*.zip
+dev/diag-profile*/
+dev/preview.png
+dev/panel-preview.png

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>GIDL 诊断</title>
+<style>
+  body { font: 13px/1.6 Consolas, monospace; margin: 16px; background: #111; color: #ddd; }
+  h1 { font-size: 16px; color: #fff; }
+  input { width: 480px; font: 13px Consolas, monospace; }
+  button { padding: 4px 14px; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+  .ok { color: #7bd88f; } .bad { color: #ff6b6b; } .dim { color: #888; }
+</style>
+</head>
+<body>
+<h1>扩展上下文网络诊断</h1>
+<p>
+URL: <input id="u" size="80">
+<button id="run">运行测试</button>
+<button id="runSave">测试完整保存流程</button>
+</p>
+<pre id="out">点击「运行测试」…</pre>
+<script src="diag.js"></script>
+</body>
+</html>

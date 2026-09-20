@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!-- 开发用：预览弹窗布局（用假数据），不影响扩展功能 -->
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>popup 预览（开发用）</title>
+<link rel="stylesheet" href="../popup.css">
+</head>
+<body>
+  <header class="hd">
+    <img class="logo" src="../icons/icon48.png" alt="">
+    <div class="hd-t">
+      <div class="title">Gemini 图片下载</div>
+      <div class="sub">生成图 6 张，共 8 张（✦=生成图）</div>
+    </div>
+    <button class="icon-btn" title="重新扫描当前页面">⟳</button>
+  </header>
+
+  <div class="tools">
+    <label class="chk"><input type="checkbox"> 包含用户上传的图片</label>
+    <label class="mode">保存
+      <select>
+        <option selected>选文件夹，批量直存</option>
+        <option>浏览器下载</option>
+      </select>
+    </label>
+    <label class="folder" hidden>📁 <input value="Gemini图片" spellcheck="false"></label>
+  </div>
+
+  <div class="actions">
+    <button class="btn">⬇ 滚动加载并扫描</button>
+    <button class="btn">全选</button>
+    <button class="btn ghost">取消全选</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <footer class="ft">
+    <div class="prog" hidden><div class="bar"><i></i></div><span>0/0</span></div>
+    <div class="status"><span>完成，已保存 6 张到「Gemini图片」✓</span><a>更换保存文件夹</a></div>
+    <div class="ft-row">
+      <span class="count">已选 6 / 8</span>
+      <button class="btn primary">下载选中（6）</button>
+    </div>
+  </footer>
+
+  <script>
+    const svg = (a, b) => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>` +
+      `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+      `<stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/>` +
+      `</linearGradient></defs>` +
+      `<rect width='240' height='240' fill='url(#g)'/>` +
+      `<circle cx='175' cy='65' r='24' fill='rgba(255,255,255,.85)'/>` +
+      `<path d='M0 240 L90 130 L150 190 L190 150 L240 200 L240 240 Z' fill='rgba(0,0,0,.25)'/>` +
+      `</svg>`
+    );
+    const pairs = [
+      ['#ffd18c', '#e2657a'], ['#8cd3ff', '#4a6de2'], ['#b9f6ca', '#1e8e5a'], ['#f6b9ff', '#7a2fa0'],
+      ['#ffe08c', '#e28b2f'], ['#9cf0e0', '#3a7bd5'], ['#ff9d9d', '#a23434'], ['#c9c9c9', '#555555']
+    ];
+    const grid = document.getElementById('grid');
+    pairs.forEach((p, i) => {
+      const c = document.createElement('div');
+      c.className = 'card' + (i < 6 ? ' sel' : '') + (i >= 6 ? ' broken' : '');
+      c.dataset.idx = String(i + 1);
+      const kind = i < 6 ? '✦' : (i === 6 ? '↑' : '•');
+      c.innerHTML = i < 6
+        ? `<img src="${svg(p[0], p[1])}"><span class="mark">${kind}</span><a class="open">↗</a>`
+        : `<span class="mark">${kind}</span><a class="open">↗</a>`;
+      grid.appendChild(c);
+    });
+  </script>
+</body>
+</html>

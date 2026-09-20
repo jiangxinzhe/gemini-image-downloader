@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 不发送 Referrer，避免图片 CDN 校验来源 -->
+<meta name="referrer" content="no-referrer">
+<title>Gemini 图片批量保存</title>
+<link rel="stylesheet" href="saver.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="hd">
+      <img class="logo" src="icons/icon48.png" alt="">
+      <div class="hd-t">
+        <h1>Gemini 图片批量保存</h1>
+        <div class="sub" id="jobInfo">正在读取下载任务…</div>
+      </div>
+    </header>
+
+    <section class="card" id="startCard" hidden>
+      <p class="desc" id="startDesc"></p>
+      <div class="row">
+        <button class="btn primary big" id="btnStart">选择保存文件夹并开始</button>
+        <a id="btnForget" hidden title="清除已记住的文件夹，下次重新选择">更换保存文件夹</a>
+      </div>
+      <p class="dim" id="startHint"></p>
+    </section>
+
+    <section class="card" id="progCard" hidden>
+      <div class="prog-row">
+        <div class="bar"><i id="barFill"></i></div>
+        <span class="prog-text" id="progText">0/0</span>
+      </div>
+      <div class="status" id="status"></div>
+    </section>
+
+    <section class="card" id="doneCard" hidden>
+      <div class="status big-status" id="doneText"></div>
+      <div class="row">
+        <button class="btn" id="btnClose">关闭此页</button>
+        <a id="btnDownloads" hidden>打开浏览器下载列表</a>
+        <a id="btnRetry" hidden>重试失败项</a>
+      </div>
+    </section>
+
+    <section class="card" id="emptyCard" hidden>
+      <p class="desc">没有待处理的下载任务。请回到 Gemini 页面，点击工具栏扩展图标，勾选图片后点「下载选中」。</p>
+    </section>
+  </main>
+
+  <script src="lib.js"></script>
+  <script src="save-lib.js"></script>
+  <script src="saver.js"></script>
+</body>
+</html>

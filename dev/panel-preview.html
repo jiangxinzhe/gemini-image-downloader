@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!-- 开发用：用 chrome API 垫片驱动 content.js 里真实的 showPanel 代码，验证面板视觉与交互 -->
+<head>
+<meta charset="utf-8">
+<title>页面内选图面板预览（开发用）</title>
+<style>
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f8f9fa url() repeat; }
+  .fake-chat { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .fake-chat p { color: #9aa0a6; }
+</style>
+</head>
+<body>
+  <div class="fake-chat">
+    <h2>模拟 Gemini 页面背景</h2>
+    <p>这里是模拟的对话内容，用于展示面板在实际页面上的悬浮效果。</p>
+  </div>
+
+  <script>
+    // —— chrome API 垫片：让 content.js 可以在普通页面里运行 ——
+    window.__gidlListener = null;
+    window.chrome = {
+      runtime: {
+        sendMessage: async () => ({ ok: true }),
+        onMessage: {
+          addListener(fn) { window.__gidlListener = fn; }
+        }
+      },
+      storage: {
+        session: {
+          get: async () => ({}),
+          set: async () => {},
+          remove: async () => {}
+        }
+      }
+    };
+  </script>
+  <script src="../lib.js"></script>
+  <script src="../content.js"></script>
+  <script>
+    const svg = (a, b) => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>` +
+      `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
+      `<stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/>` +
+      `</linearGradient></defs>` +
+      `<rect width='300' height='300' fill='url(#g)'/>` +
+      `<circle cx='220' cy='80' r='30' fill='rgba(255,255,255,.85)'/>` +
+      `<path d='M0 300 L110 160 L180 230 L225 185 L300 260 L300 300 Z' fill='rgba(0,0,0,.25)'/>` +
+      `</svg>`
+    );
+    const pairs = [
+      ['#ffd18c', '#e2657a'], ['#8cd3ff', '#4a6de2'], ['#b9f6ca', '#1e8e5a'],
+      ['#f6b9ff', '#7a2fa0'], ['#ffe08c', '#e28b2f'], ['#9cf0e0', '#3a7bd5'],
+      ['#ff9d9d', '#a23434'], ['#c9c9c9', '#555555'], ['#b8c4ff', '#5a2fd0']
+    ];
+    const items = pairs.map((p, i) => ({
+      id: 'https://lh3.googleusercontent.com/gg/MOCK' + i,
+      src: svg(p[0], p[1]),
+      origUrl: 'https://lh3.googleusercontent.com/gg/MOCK' + i + '=d',
+      kind: i < 7 ? 'generated' : 'uploaded'
+    }));
+    // 触发真实的 showPanel（通过 content.js 注册的消息监听器）
+    window.__gidlListener(
+      { type: 'GIDL_PANEL_SHOW', items, selectedIds: [items[0].id, items[2].id, items[5].id], title: '西甲对战信息图生成' },
+      {},
+      () => {}
+    );
+  </script>
+</body>
+</html>

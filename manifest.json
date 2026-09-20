@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini 图片批量下载",
+  "version": "1.9.0",
+  "description": "一键批量下载 Gemini (gemini.google.com) 对话中生成的图片原图，支持滚动加载全部图片、右键单张下载。",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "downloads",
+    "contextMenus",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "https://gemini.googleworkspace.com/*",
+    "https://*.googleusercontent.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "下载 Gemini 图片",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://gemini.googleworkspace.com/*"
+      ],
+      "js": ["lib.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>弹窗诊断</title>
+<style>
+  body { width: 340px; font: 13px/1.6 Consolas, monospace; margin: 10px; }
+  button { padding: 6px 14px; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h3>弹窗 showDirectoryPicker 存活性测试</h3>
+  <button id="go">选择目录并写入测试文件</button>
+  <pre id="out">点击按钮后：若本弹窗在目录对话框关闭后仍能显示结果，说明弹窗内可选目录。</pre>
+  <script src="popup-diag.js"></script>
+</body>
+</html>
