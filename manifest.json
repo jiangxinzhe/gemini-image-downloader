@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini 图片批量下载",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "一键批量下载 Gemini (gemini.google.com) 对话中生成的图片原图，支持滚动加载全部图片、右键单张下载。",
   "minimum_chrome_version": "102",
   "permissions": [
