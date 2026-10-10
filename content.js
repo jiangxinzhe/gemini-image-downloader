@@ -269,6 +269,7 @@
       const picked = items
         .filter((it) => selected.has(it.id))
         .map((it) => ({
+          id: it.id,
           url: it.origUrl,
           blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
           perfUrl: it.perfUrl || '',
@@ -699,6 +700,7 @@
       (async () => {
         try {
           const resp = await fetch(msg.url);
+          if (!resp.ok) { sendResponse({ ok: false, error: 'HTTP ' + resp.status }); return; }
           const blob = await resp.blob();
           if (blob.size > 25 * 1024 * 1024) {
             sendResponse({ ok: false, error: '文件超过 25MB' });

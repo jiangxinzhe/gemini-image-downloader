@@ -379,6 +379,7 @@
     const base = G.sanitizeName(title || 'gemini', 40);
     const digits = String(chosen.length).length;
     const payload = chosen.map((it, k) => ({
+      id: it.id,
       url: it.origUrl,
       blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
       perfUrl: it.perfUrl || '',
@@ -402,7 +403,7 @@
     els.status.textContent = '准备保存…';
 
     // 先登记任务：若弹窗中途被系统关闭，下次打开可一键续存
-    await chrome.storage.session.set({ saveJob: { items: payload, title, mode: 'picker' } }).catch(() => {});
+    await chrome.storage.session.set({ saveJob: { items: payload, title, mode: 'picker', runner: 'popup' } }).catch(() => {});
 
     let dir = await GIDLS.getGrantedDir();
     if (!dir) {
@@ -431,6 +432,13 @@
   }
 
   async function runSaveLoop(dir, payload) {
+    // saveJob 只记剩余未完成项：每张完结即回写，弹窗中途被关闭后续存只跑剩余的；
+    // runner 标记供 saver 判断任务归属（弹窗为单实例，标记残留即意味着弹窗已死、任务成孤儿）
+    let remaining = payload.slice();
+    const persistJob = () => {
+      const p = chrome.storage.session.set({ saveJob: { items: remaining, title, mode: 'picker', runner: 'popup' } });
+      if (p && p.catch) p.catch(() => {});
+    };
     const taken = new Set();
     let done = 0;
     let viaBrowser = 0;
@@ -438,7 +446,6 @@
     let failed = 0;
     let firstError = '';
     let firstAttempts = null;
-    const failedItems = [];
     let idx = 0;
     const CONCURRENCY = 3;
 
@@ -453,6 +460,7 @@
         const it = payload[i];
         try {
           const r = await GIDLS.saveToDir(dir, it, taken);
+          remaining = remaining.filter((x) => x !== it);
           if (!r || r.via === 'browser') viaBrowser++;
           else {
             done++;
@@ -461,7 +469,6 @@
           }
         } catch (e) {
           failed++;
-          failedItems.push(it);
           if (!firstError) firstError = String((e && e.message) || e);
           if (e && (e.name === 'NotFoundError' || /保存位置已失效/.test(firstError))) {
             hasStoredDir = false;
@@ -469,12 +476,14 @@
             updateModeUi();
           }
         }
+        persistJob();
         showProgress(done + viaBrowser + failed, payload.length);
         if (failed) els.status.textContent = `已保存 ${done + viaBrowser}，失败 ${failed}…`;
       }
     });
     await Promise.all(workers);
 
+    // 正常跑完（含失败项，弹窗无重试入口）：清除任务；中断场景由上面的增量回写兜住
     await chrome.storage.session.remove('saveJob').catch(() => {});
     dlBusy = false;
     updateFooter();

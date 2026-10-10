@@ -16,6 +16,11 @@ const state = {
   failed: [] // { url, filename, error }
 };
 
+const GEMINI_MATCHES = [
+  'https://gemini.google.com/*',
+  'https://gemini.googleworkspace.com/*'
+];
+
 // downloadId -> { url, filename }
 const inflight = new Map();
 
@@ -60,13 +65,43 @@ async function fetchExt(url) {
   }
 }
 
+// 经 Gemini 页面内容脚本把 blob: 地址转成 dataUrl（downloads 无法访问页面源 blob）
+async function blobViaTab(url) {
+  try {
+    const tabs = await chrome.tabs.query({ url: GEMINI_MATCHES });
+    if (!tabs || !tabs.length) return { ok: false, error: '无 Gemini 标签页' };
+    return await chrome.tabs.sendMessage(tabs[0].id, { type: 'GIDL_BLOB_DATA', url });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 async function downloadOne(item, folder) {
-  const ext = await fetchExt(item.url);
+  // blob: 地址属于 Gemini 页面源，downloads 无法访问；先经页面取字节转 dataUrl 再下载
+  let dlUrl = item.url;
+  if (/^blob:/i.test(dlUrl)) {
+    const res = await blobViaTab(dlUrl);
+    if (res && res.ok && res.dataUrl) {
+      dlUrl = res.dataUrl;
+    } else {
+      state.settled++;
+      state.failed.push({
+        url: item.url,
+        filename: '',
+        error: '页面图取字节失败：' + ((res && res.error) || '无法访问 Gemini 页面')
+      });
+      setBadge();
+      broadcast({ type: 'GIDL_DL_PROGRESS', total: state.total, settled: state.settled, failed: state.failed.length });
+      await saveState();
+      return;
+    }
+  }
+  const ext = await fetchExt(dlUrl);
   const name = `${item.name || 'gemini_image'}${ext || '.png'}`;
   const path = G.makePath(folder, name);
   try {
     const dlId = await chrome.downloads.download({
-      url: item.url,
+      url: dlUrl,
       filename: path,
       conflictAction: 'uniquify'
     });

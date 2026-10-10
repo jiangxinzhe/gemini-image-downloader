@@ -87,8 +87,10 @@ gemini-downloader/
 ## Development
 
 ```bash
-node tests/lib.test.js     # unit tests
-node dev/make_icons.js     # regenerate icons
+node tests/lib.test.js       # unit tests
+node tests/save-lib.test.js  # save pipeline integration tests (stubbed chrome/fetch)
+bash dev/lint.sh             # pre-release gate: tests + syntax + no-undef
+node dev/make_icons.js       # regenerate icons
 ```
 
 `dev/preview.html` and `dev/panel-preview.html` can be opened directly in a browser to preview the popup and the in-page selection panel.

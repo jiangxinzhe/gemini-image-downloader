@@ -99,6 +99,12 @@
     return [...segs, sanitizeName(name, 80)].join('/');
   }
 
+  // 统一图片校验：非 image/* 或空内容一律判为该层失败（防 200 HTML 被当图片写盘）
+  function checkImageBlob(blob) {
+    if (!blob || typeof blob.size !== 'number' || blob.size <= 0) return false;
+    return String(blob.type || '').toLowerCase().startsWith('image/');
+  }
+
   const GIDL = {
     isUgcUrl,
     baseId,
@@ -107,7 +113,8 @@
     extFromMime,
     sanitizeName,
     makePath,
-    pairPerfCandidates
+    pairPerfCandidates,
+    checkImageBlob
   };
 
   if (typeof globalThis !== 'undefined') globalThis.GIDL = GIDL;

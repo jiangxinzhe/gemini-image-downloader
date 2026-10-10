@@ -37,13 +37,34 @@
     });
 
     const { saveJob: job } = await chrome.storage.session.get('saveJob');
-    if (!job || !Array.isArray(job.items) || !job.items.length) {
+    if (!job || !Array.isArray(job.items)) {
       els.emptyCard.hidden = false;
       els.jobInfo.textContent = '没有任务';
       return;
     }
-    // 任务只处理一次，避免刷新/重复打开时重复下载
-    await chrome.storage.session.remove('saveJob');
+    if (job.runner === 'saver') {
+      // 有其他保存页标签页存活 → 任务可能仍在执行，禁止双跑（防止两个 taken 集合撞名）。
+      // 标签页已关闭则视为孤儿任务，安全接管续存。
+      const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('saver.html') }).catch(() => []);
+      let cur;
+      try { cur = await chrome.tabs.getCurrent(); } catch (e) { cur = undefined; }
+      const otherAlive = (tabs || []).some((t) => !cur || t.id !== cur.id);
+      if (otherAlive) {
+        els.emptyCard.hidden = false;
+        els.jobInfo.textContent = '任务正在保存页进行中，请勿重复打开。';
+        return;
+      }
+    }
+    // runner === 'popup' 的任务视为孤儿：弹窗是单实例窗口，本页能打开即旧弹窗已关闭
+    if (job.items.length === 0) {
+      els.emptyCard.hidden = false;
+      els.jobInfo.textContent = `${job.title || 'Gemini 对话'} · 上次任务已全部处理完。`;
+      return;
+    }
+    // 占位：标记任务已被本页接手（跑批期间 runSave 会持续回写剩余项）
+    await chrome.storage.session.set({
+      saveJob: { items: job.items, title: job.title || '', mode: job.mode, folder: job.folder, runner: 'saver' }
+    }).catch(() => {});
 
     els.jobInfo.textContent = `${job.title || 'Gemini 对话'} · 共 ${job.items.length} 张图片`;
 
@@ -139,6 +160,12 @@
     showProgress(0, job.items.length);
     showStatus('开始保存…');
 
+    // 剩余项实时回写（runner 标记防双跑）：页面中途关闭后，下次打开 saver 仍能续存剩余项
+    const persistJob = (rest) => {
+      const p = chrome.storage.session.set({ saveJob: { items: rest, title: job.title || '', mode: 'picker', runner: 'saver' } });
+      if (p && p.catch) p.catch(() => {});
+    };
+    let remaining = job.items.slice();
     const taken = new Set();
     let done = 0;
     let viaBrowser = 0;
@@ -156,7 +183,8 @@
         if (i >= job.items.length) return;
         const it = job.items[i];
         try {
-          const r = await saveToDir(dir, it, taken);
+          const r = await GIDLS.saveToDir(dir, it, taken);
+          remaining = remaining.filter((x) => x !== it);
           if (!r || r.via === 'browser') viaBrowser++;
           else {
             done++;
@@ -170,23 +198,31 @@
             await GIDLS.idbSet('dir', null).catch(() => {});
           }
         }
+        persistJob(remaining);
         showProgress(done + viaBrowser + failed, job.items.length);
         if (failed) showStatus(`已保存 ${done + viaBrowser}，失败 ${failed}…`);
       }
     });
     await Promise.all(workers);
 
+    // 跑完全清；有失败项时 saver 自己有「重试失败项」按钮，无需保留任务
+    await chrome.storage.session.remove('saveJob').catch(() => {});
+
     const parts = [];
     if (done) parts.push(`✔ 直存 ${done} 张到「${dir.name || '所选文件夹'}」（原图 ${origCount} · 页面图 ${done - origCount}）`);
     if (viaBrowser) parts.push(`${viaBrowser} 张改走浏览器下载，位于「下载/${dir.name}」文件夹`);
     if (failed) parts.push(`✘ 失败 ${failed} 张`);
-    const summary = parts.join('\n') + (firstError ? `\n\n首个错误：${firstError}` : '');
+    const chain = firstAttempts && firstAttempts.length
+      ? firstAttempts.map((x) => `${x.layer}:${x.error}`).join(' → ') : '';
+    const summary = parts.join('\n')
+      + (chain && done > 0 && origCount === 0 ? `\n⚠ 原因链：${chain}` : '')
+      + (firstError ? `\n\n首个错误：${firstError}` : '');
 
     showDone(
       failed ? `保存完成（部分失败）\n${summary}` : `保存完成！\n${summary}`,
       viaBrowser > 0,
       failed,
-      failedItems.length ? () => runSave({ items: failedItems }, dir) : null
+      failedItems.length ? () => runSave({ items: failedItems, title: job.title }, dir) : null
     );
   }
 

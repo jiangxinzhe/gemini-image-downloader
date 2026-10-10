@@ -69,6 +69,13 @@
     return tabs.length ? tabs[0].id : null;
   }
 
+  // —— 共享：把 dataUrl 转成 blob 并校验为图片（各降级层通用） ——
+  async function dataUrlAsImageBlob(dataUrl) {
+    const b = await (await fetch(dataUrl)).blob();
+    if (!G.checkImageBlob(b)) throw new Error('非图片内容(' + (b.type || 'unknown') + ')');
+    return b;
+  }
+
   // —— 主世界取字节（内容脚本环境被拒时的兜底） ——
   async function blobViaMainWorld(tabId, url) {
     let tid = tabId;
@@ -223,6 +230,7 @@
     const attempts = [];
     const note = (layer, error) => { if (error) attempts.push({ layer, error: String(error).slice(0, 80) }); };
     const deadline = Date.now() + 110000; // 单张总时限，防止个别图卡死整批
+    const hasTime = () => Date.now() < deadline;
 
     const fetchAsBlob = async (u) => {
       const ctrl = new AbortController();
@@ -230,7 +238,9 @@
       const resp = await fetch(u, { credentials: 'include', signal: ctrl.signal });
       clearTimeout(timer);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return await resp.blob();
+      const b = await resp.blob();
+      if (!G.checkImageBlob(b)) throw new Error('非图片内容(' + (b.type || 'unknown') + ')');
+      return b;
     };
 
     // 1) 本页直接抓取（服务器原图地址）
@@ -249,13 +259,15 @@
       try {
         const res = await chrome.runtime.sendMessage({ type: 'GIDL_FETCH', url });
         if (res && res.dataUrl) {
-          blob = await (await fetch(res.dataUrl)).blob();
+          blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
           note('后台抓取', res.error);
         }
-      } catch (e) { /* keep err */ }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('后台抓取', err); }
+      }
     }
 
     // 3) Gemini 页面上下文抓取服务器原图地址
@@ -263,13 +275,15 @@
       try {
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url });
         if (res && res.ok && res.dataUrl) {
-          blob = await (await fetch(res.dataUrl)).blob();
+          blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
           note('页面抓取服务器原图', res.error);
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('页面抓取服务器原图', err); }
+      }
     }
 
     // 4) 网络记录中的原图（宽高比校验通过才采用）
@@ -278,14 +292,16 @@
         const ratio = item.w && item.h ? item.w / item.h : 0;
         const res = await sendToGemini({ type: 'GIDL_FETCH_BEST', urls: [item.perfUrl], ratio });
         if (res && res.ok && res.dataUrl) {
-          blob = await (await fetch(res.dataUrl)).blob();
+          blob = await dataUrlAsImageBlob(res.dataUrl);
           viaOriginal = true;
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
           note('网络痕迹原图', res.error);
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('网络痕迹原图', err); }
+      }
     }
 
     // 5) 原生下载截获：触发 Gemini 自己的下载按钮，hook 拦截它抓取的原图字节
@@ -307,30 +323,38 @@
       try {
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl });
         if (res && res.ok && res.dataUrl) {
-          blob = await (await fetch(res.dataUrl)).blob();
+          blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
           note('页面预览', res.error);
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('页面预览', err); }
+      }
     }
     if (!blob && blobUrl && hasTime()) {
       try {
         const res = await blobViaMainWorld(null, blobUrl);
         if (res && res.ok && res.dataUrl) {
-          blob = await (await fetch(res.dataUrl)).blob();
+          blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
           note('layer4', res.error);
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('layer4', err); }
+      }
     }
 
-    // 7) 浏览器下载兜底（后台队列，不受本页生命周期影响）
+    // 7) 浏览器下载兜底（后台队列，不受本页生命周期影响）。
+    // blob: 地址属于 Gemini 页面源，扩展上下文无法访问，交给 downloads 必然失败——明确报错。
     if (!blob) {
-      const extGuess = isBlobSrc ? '' : '.png'; // blob 交由 Chrome 按类型补扩展名
+      if (isBlobSrc) {
+        throw new Error('页面内存图取字节失败，无法走浏览器下载；请重试或改用「选文件夹」模式');
+      }
+      const extGuess = '.png';
       const dlPath = G.makePath(dir.name || 'Gemini图片', item.name + extGuess);
       await chrome.downloads.download({ url, filename: dlPath, conflictAction: 'uniquify' });
       return { via: 'browser', orig: false, native: false, err, attempts: attempts.slice(0, 6) };
@@ -341,7 +365,7 @@
       try {
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl });
         if (res && res.ok && res.dataUrl) {
-          const preview = await (await fetch(res.dataUrl)).blob();
+          const preview = await dataUrlAsImageBlob(res.dataUrl);
           if (preview.size > blob.size) {
             blob = preview;
             viaOriginal = false;

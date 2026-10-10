@@ -80,15 +80,17 @@ gemini-downloader/
 ├── popup.html/css/js   # 弹窗 UI：扫描、勾选、弹窗内直接保存
 ├── saver.html/css/js   # 批量保存页（备用）：中断续存时使用
 ├── icons/              # 扩展图标
-├── dev/                # 开发辅助（预览页、图标生成、诊断扩展）
+├── dev/                # 开发辅助（预览页、图标生成、lint 门禁、诊断扩展）
 └── tests/              # node 单元测试（node tests/lib.test.js）
 ```
 
 ## 开发
 
 ```bash
-node tests/lib.test.js     # 工具函数单元测试
-node dev/make_icons.js     # 重新生成图标
+node tests/lib.test.js         # 工具函数单元测试
+node tests/save-lib.test.js    # 保存管线集成测试（stub chrome/fetch）
+bash dev/lint.sh               # 发布前门禁：单测 + 语法 + no-undef
+node dev/make_icons.js         # 重新生成图标
 ```
 
 `dev/preview.html` 与 `dev/panel-preview.html` 可在浏览器中直接打开，预览弹窗与页面内选图面板的布局。
