@@ -170,6 +170,23 @@
             } catch (e) { /* ignore */ }
             return u;
           };
+          // 下载抑制窗口：截获期间 Gemini 自己也会发起 <a download> 下载（弹系统另存为框、
+          // 抢焦点致弹窗中断、默认下载目录多一份重复文件）。窗口期内吞掉这类点击的默认行为
+          let suppressUntil = 0;
+          document.addEventListener('click', (e) => {
+            if (Date.now() > suppressUntil) return;
+            const a = e.target && e.target.closest ? e.target.closest('a[download], a[href^="blob:"]') : null;
+            if (a) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }, true);
+          document.addEventListener('__gidl_suppress', (e) => {
+            try {
+              const d = JSON.parse(e.detail);
+              suppressUntil = Date.now() + (d.ms || 30000);
+            } catch (err) { /* ignore */ }
+          }, true);
           document.addEventListener('__gidl_request', (e) => {
             let token = '';
             try {

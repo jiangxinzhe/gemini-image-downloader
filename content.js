@@ -401,6 +401,14 @@
     });
   }
 
+  // 开/关下载抑制窗口：截获期间 Gemini 自己会发起 <a download> 下载，
+  // 系统另存为对话框会抢焦点关闭扩展弹窗，还会在下载目录留重复文件
+  function suppressNativeDownload(ms) {
+    try {
+      document.dispatchEvent(new CustomEvent('__gidl_suppress', { detail: JSON.stringify({ ms }) }));
+    } catch (e) { /* ignore */ }
+  }
+
   // 在图片周边寻找 Gemini 原生的下载按钮（先模拟悬停触发工具栏渲染）
   function findNativeDownloadButton(imgEl) {
     let container = imgEl;
@@ -790,6 +798,7 @@
           const t0 = Date.now() - 1000; // 时钟余量
           const timeoutMs = msg.timeoutMs || 20000;
           const endAt = Date.now() + timeoutMs;
+          suppressNativeDownload(timeoutMs + 5000); // 点击前开启：吞掉 Gemini 自身触发的另存为
           btn.click();
           while (Date.now() < endAt) {
             const cap = await waitNativeCapture(t0, msg.minSize || 100000, Math.max(500, endAt - Date.now()));
@@ -810,6 +819,7 @@
             sendResponse({ ok: true, dataUrl: bytes.dataUrl, size: cap.size, url: cap.url });
             return;
           }
+          suppressNativeDownload(0); // 超时未截获：解除抑制，避免吞掉用户后续手动下载
           sendResponse({ ok: false, error: 'capture-timeout' });
         } catch (e) {
           sendResponse({ ok: false, error: String((e && e.message) || e) });
