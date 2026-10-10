@@ -129,9 +129,9 @@
         world: 'MAIN',
         func: () => {
           // 版本化：旧版 hook 已存在时也要升级（扩展更新后页面未刷新的场景）。
-          // v3：抑制覆盖 showSaveFilePicker 与 dispatchEvent 派发的锚点点击
-          if (window.__gidlHookVer === 3) return;
-          window.__gidlHookVer = 3;
+          // v4：截获窗口内吊销 Gemini 下载载荷 URL，从源头消灭其自身下载的另存为对话框
+          if (window.__gidlHookVer === 4) return;
+          window.__gidlHookVer = 4;
           // 只保留最近 10 分钟内的捕获：原生截获为短时操作，过期 blob 及早释放，避免长会话内存驻留
           const KEEP_MS = 10 * 60 * 1000;
           const state = { blobs: [] };
@@ -169,13 +169,20 @@
             try {
               if (obj && typeof obj.size === 'number' && obj.size > 200000) {
                 push({ url: u, size: obj.size, time: Date.now(), blob: obj });
+                // 兜底四（源头）：抑制期内创建的下载载荷 URL 立即吊销——
+                // 字节已被本 hook 捕获（持 Blob 本体），Gemini 自己的下载立即失败，
+                // 系统"另存为"对话框从源头消失
+                if (Date.now() <= suppressUntil) {
+                  setTimeout(() => { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } }, 0);
+                }
               }
             } catch (e) { /* ignore */ }
             return u;
           };
-          // 下载抑制窗口：截获期间 Gemini 自己也会发起 <a download> 下载（弹系统另存为框、
-          // 抢焦点致弹窗中断、默认下载目录多一份重复文件）。窗口期内吞掉这类点击的默认行为。
-          // composedPath 穿透开放 shadow root（按钮多藏在 shadow 里，e.target 会被重定向到宿主）
+          // 下载抑制窗口：截获期间 Gemini 自己也会发起下载（系统"另存为"对话框）。
+          // 点击点击层拦截（click/原型/dispatchEvent/savePicker）+ 吊销载荷双管齐下：
+          // 捕获到的 blob URL 若在抑制期内被导航/下载消费，立即吊销——
+          // 字节已在本 hook 手里（Blob 本体），Gemini 的下载会立即失败，对话框无从弹出
           let suppressUntil = 0;
           const hitSuppressedLink = (e) => {
             if (Date.now() > suppressUntil) return null;
@@ -189,7 +196,8 @@
             return null;
           };
           document.addEventListener('click', (e) => {
-            if (hitSuppressedLink(e)) {
+            const a = hitSuppressedLink(e);
+            if (a) {
               e.preventDefault();
               e.stopPropagation();
             }
@@ -214,8 +222,7 @@
             } catch (e) { /* ignore */ }
             return origDispatch.apply(this, arguments);
           };
-          // 兜底三：Gemini 也可能走 File System Access 的另存对话框（外观与系统另存为一致）。
-          // 抑制期内直接拒绝并模拟用户取消
+          // 兜底三：File System Access 另存对话框（外观与系统另存为一致）
           if (typeof window.showSaveFilePicker === 'function') {
             const origSavePicker = window.showSaveFilePicker.bind(window);
             window.showSaveFilePicker = function (...args) {
