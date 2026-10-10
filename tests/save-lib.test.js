@@ -130,6 +130,53 @@ async function t(name, fn) {
     assert.ok(r.attempts.some((a) => a.layer === '弹窗直连'), '失败层应进原因链');
   });
 
+  // —— 4c. 内存图排序：data: 图不走 L1/L2/L3，直奔 dlLink/截获通道（原图优先于兜底画质）——
+  await t('内存图重排序：跳过直连层，dlLink 成功计 orig', async () => {
+    let l1Called = false;
+    stubChrome({
+      fetchImpl: async (u) => {
+        if (String(u).startsWith('data:image')) return { ok: true, blob: async () => makeBlob('image/png', 2000) };
+        l1Called = true;
+        throw new Error('fetch failed');
+      },
+      msgReply: (m) => {
+        if (m.type === 'GIDL_FETCH') return { error: 'stub' };
+        if (m.type === 'GIDL_DL_LINK_DATA') return { ok: true, dataUrl: PNG_DATAURL, size: 2000 };
+        return null;
+      }
+    });
+    const r = await freshLib().saveToDir(
+      makeDir(new Set(), []),
+      { ...ITEM, url: 'data:image/png;base64,xxx', blobUrl: '', dlLink: 'blob:https://gemini.google.com/dl' },
+      new Set()
+    );
+    assert.strictEqual(r.via, 'direct');
+    assert.strictEqual(r.orig, true, 'dlLink 字节应为原图');
+    assert.strictEqual(l1Called, false, '内存图不得走直连层（会拿兜底画质就过关）');
+  });
+
+  // —— 4d. 内存图 + dlLink 失败 + 原生截获失败 → 原因链含两层具体原因 ——
+  await t('内存图恢复失败：原因链透出 no-dl-link 与截获错误', async () => {
+    stubChrome({
+      fetchImpl: async () => { throw new Error('fetch failed'); },
+      msgReply: (m) => {
+        if (m.type === 'GIDL_FETCH') return { error: 'stub' };
+        if (m.type === 'GIDL_DL_LINK_DATA') return { ok: false, error: 'no-dl-link' };
+        if (m.type === 'GIDL_NATIVE_DOWNLOAD') return { ok: false, error: 'no-button' };
+        return null;
+      }
+    });
+    const r = await freshLib().saveToDir(
+      makeDir(new Set(), []),
+      { ...ITEM, url: 'data:image/png;base64,xxx', blobUrl: 'blob:https://gemini.google.com/x' },
+      new Set()
+    );
+    assert.strictEqual(r.via, 'browser'); // 内存图且 blob 交 downloads 必败？——此处 url 是 data: 走兜底
+    const layers = r.attempts.map((a) => a.layer);
+    assert.ok(layers.includes('原生截获'), '原生截获层应在原因链');
+    assert.ok(r.attempts.some((a) => a.layer === '原生截获' && a.error === 'no-button'), '应透出 no-button 具体原因');
+  });
+
   // —— 5. L2 dataUrl 返回真图片 → 直存成功 ——
   await t('L2 后台 dataUrl（image/png）：直存成功', async () => {
     stubChrome({

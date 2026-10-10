@@ -228,7 +228,7 @@
     if (res && res.ok && res.dataUrl) {
       return { blob: await (await fetch(res.dataUrl)).blob(), via: 'native' };
     }
-    return null;
+    return { error: (res && res.error) || 'no-response' };
   }
 
   // —— 单张保存完整管线 ——
@@ -238,6 +238,8 @@
     const url = item.url;
     const blobUrl = item.blobUrl || '';
     const isBlobSrc = /^blob:/i.test(url);
+    // 页面内存图（data:/blob:）只是兜底画质——先试原图恢复通道，最后才落内存图
+    const isMemorySrc = isBlobSrc || /^data:image\//i.test(url);
     const tabId = item.tabId || 0; // 页面通道定向：扫描所在标签页
     let blob = null;
     let viaOriginal = false;
@@ -259,8 +261,9 @@
       return b;
     };
 
-    // 1) 本页直接抓取（服务器原图地址）；=d/服务器地址直连成功即为原图
-    if (!blob) {
+    // 1) 本页直接抓取（服务器原图地址）；=d/服务器地址直连成功即为原图。
+    // 内存图跳过此层：它总能"成功"但只是兜底画质，会让原图通道永远轮不到
+    if (!blob && !isMemorySrc) {
       try {
         blob = await fetchAsBlob(url);
         viaOriginal = G.isUgcUrl(url);
@@ -271,8 +274,8 @@
       }
     }
 
-    // 2) 后台 Service Worker 抓取（独立网络上下文）
-    if (!blob) {
+    // 2) 后台 Service Worker 抓取（独立网络上下文，仅对服务器地址有意义）
+    if (!blob && !isMemorySrc) {
       try {
         const res = await chrome.runtime.sendMessage({ type: 'GIDL_FETCH', url });
         if (res && res.dataUrl) {
@@ -289,7 +292,7 @@
     }
 
     // 3) Gemini 页面上下文抓取服务器原图地址
-    if (!blob && !isBlobSrc && hasTime()) {
+    if (!blob && !isMemorySrc && hasTime()) {
       try {
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url }, tabId);
         if (res && res.ok && res.dataUrl) {
@@ -340,8 +343,10 @@
       }
     }
 
-    // 5) 原生下载截获：触发 Gemini 自己的下载按钮，hook 拦截它抓取的原图字节
-    if (!blob && hasTime() && item.blobUrl && item.id) {
+    // 5) 原生下载截获：触发 Gemini 自己的下载按钮（「下载完整尺寸的图片」），
+    // hook 拦截它抓取的原图字节。内存图的主恢复通道，串行执行防字节错配
+    if (!blob && hasTime() && item.id && (isMemorySrc || blobUrl)) {
+      let capErr = '';
       try {
         const r = (nativeChain = nativeChain.then(() => nativeCapture(item), () => nativeCapture(item)));
         const got = await r;
@@ -350,9 +355,11 @@
           viaOriginal = true;
           viaNative = true;
           err = '';
+        } else if (got && got.error) {
+          capErr = got.error;
         }
-      } catch (e) { /* ignore */ }
-      if (!blob) note('原生截获', 'capture-failed');
+      } catch (e) { capErr = String((e && e.message) || e); }
+      if (!blob) note('原生截获', capErr || 'capture-failed');
     }
 
     // 6) 页面内存预览图（blob，最后兜底）
