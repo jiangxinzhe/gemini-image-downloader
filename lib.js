@@ -61,17 +61,31 @@
     return map[m] || '';
   }
 
-  // 网络记录候选与生成图按抓取时间/文档顺序配对（候选不足则不配对，防止错配）
-  // 返回与 items 等长的 perfUrl 数组
+  // 网络记录候选与生成图配对：baseId 精确匹配优先（同一张图，不会错配），
+  // 匹配不到再按抓取时间顺序兜底配对——仅限已知宽高的项（配对后有宽高比校验把关）；
+  // 顺序候选不足则整组不配，防止错位。返回与 items 等长的 perfUrl 数组
   function pairPerfCandidates(items, cands) {
     const out = new Array(items.length).fill('');
     const gen = [];
     items.forEach((it, idx) => { if (it && it.kind === 'generated') gen.push(idx); });
-    if (!cands || !cands.length || gen.length > cands.length) return out;
+    if (!cands || !cands.length || !gen.length) return out;
     const sorted = cands.slice().sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
-    gen.forEach((itemIdx, k) => {
-      out[itemIdx] = withSizeParam(sorted[k].url, 'd');
-    });
+    const used = new Array(sorted.length).fill(false);
+
+    for (const idx of gen) {
+      const it = items[idx];
+      if (!it || !it.id) continue;
+      const k = sorted.findIndex((c, i) => !used[i] && baseId(c.url) === it.id);
+      if (k !== -1) { used[k] = true; out[idx] = withSizeParam(sorted[k].url, 'd'); }
+    }
+
+    const restItems = gen.filter((idx) => !out[idx] && items[idx] && items[idx].w > 0 && items[idx].h > 0);
+    const restCands = sorted.filter((_, i) => !used[i]);
+    if (restItems.length && restItems.length <= restCands.length) {
+      restItems.forEach((itemIdx, k) => {
+        out[itemIdx] = withSizeParam(restCands[k].url, 'd');
+      });
+    }
     return out;
   }
 

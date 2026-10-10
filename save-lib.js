@@ -52,11 +52,18 @@
     }
   }
 
-  // —— Gemini 标签页定位 ——
+  // —— Gemini 标签页定位（可带 tabId 定向：扫描在哪个标签页，页面通道就发往哪个） ——
   async function geminiTabs() {
     return chrome.tabs.query({ url: GEMINI_MATCHES });
   }
-  async function sendToGemini(msg) {
+  async function sendToGemini(msg, tabId) {
+    if (tabId) {
+      try {
+        return await chrome.tabs.sendMessage(tabId, msg);
+      } catch (e) {
+        return null; // 指定标签页已关闭/无内容脚本
+      }
+    }
     for (const t of await geminiTabs()) {
       try {
         return await chrome.tabs.sendMessage(t.id, msg);
@@ -111,9 +118,10 @@
 
   // —— 主世界 hook：包装 fetch / createObjectURL，截获 Gemini 自己抓取的原图字节 ——
   let hookInstalled = false;
-  async function installNativeHook() {
+  async function installNativeHook(tabId) {
     if (hookInstalled) return;
-    const tid = await firstGeminiTabId();
+    let tid = tabId;
+    if (!tid) tid = await firstGeminiTabId();
     if (!tid) return;
     try {
       await chrome.scripting.executeScript({
@@ -121,8 +129,15 @@
         world: 'MAIN',
         func: () => {
           if (window.__gidlHook) return;
+          // 只保留最近 10 分钟内的捕获：原生截获为短时操作，过期 blob 及早释放，避免长会话内存驻留
+          const KEEP_MS = 10 * 60 * 1000;
           const state = { blobs: [] };
+          const prune = () => {
+            const cutoff = Date.now() - KEEP_MS;
+            while (state.blobs.length && state.blobs[0].time < cutoff) state.blobs.shift();
+          };
           const push = (rec) => {
+            prune();
             state.blobs.push(rec);
             if (state.blobs.length > 40) state.blobs.shift();
             try {
@@ -160,6 +175,7 @@
             try {
               const d = JSON.parse(e.detail);
               token = d.token;
+              prune();
               const rec = state.blobs.find((b) => b.time === d.time)
                 || state.blobs.filter((b) => b.time >= d.time).sort((a, b) => b.size - a.size)[0];
               if (!rec) {
@@ -203,13 +219,12 @@
   let nativeChain = Promise.resolve();
 
   async function nativeCapture(item) {
-    await installNativeHook();
-    const res = await sendToGemini({
+    await installNativeHook(item.tabId);    const res = await sendToGemini({
       type: 'GIDL_NATIVE_DOWNLOAD',
       id: item.id,
       minSize: 100000,
       timeoutMs: 20000
-    });
+    }, item.tabId);
     if (res && res.ok && res.dataUrl) {
       return { blob: await (await fetch(res.dataUrl)).blob(), via: 'native' };
     }
@@ -217,12 +232,13 @@
   }
 
   // —— 单张保存完整管线 ——
-  // item: { url, blobUrl, perfUrl, id, w, h, name }
+  // item: { url, blobUrl, perfUrl, id, w, h, name, tabId }
   // 返回：{ via: 'direct', orig } 或 { via: 'browser' }
   async function saveToDir(dir, item, taken) {
     const url = item.url;
     const blobUrl = item.blobUrl || '';
     const isBlobSrc = /^blob:/i.test(url);
+    const tabId = item.tabId || 0; // 页面通道定向：扫描所在标签页
     let blob = null;
     let viaOriginal = false;
     let viaNative = false;
@@ -273,7 +289,7 @@
     // 3) Gemini 页面上下文抓取服务器原图地址
     if (!blob && !isBlobSrc && hasTime()) {
       try {
-        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url });
+        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url }, tabId);
         if (res && res.ok && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
@@ -290,7 +306,7 @@
     if (!blob && item.perfUrl && hasTime()) {
       try {
         const ratio = item.w && item.h ? item.w / item.h : 0;
-        const res = await sendToGemini({ type: 'GIDL_FETCH_BEST', urls: [item.perfUrl], ratio });
+        const res = await sendToGemini({ type: 'GIDL_FETCH_BEST', urls: [item.perfUrl], ratio }, tabId);
         if (res && res.ok && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
           viaOriginal = true;
@@ -321,7 +337,7 @@
     // 6) 页面内存预览图（blob，最后兜底）
     if (!blob && blobUrl && hasTime()) {
       try {
-        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl });
+        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl }, tabId);
         if (res && res.ok && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
@@ -335,7 +351,7 @@
     }
     if (!blob && blobUrl && hasTime()) {
       try {
-        const res = await blobViaMainWorld(null, blobUrl);
+        const res = await blobViaMainWorld(tabId, blobUrl);
         if (res && res.ok && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
           err = '';
@@ -363,7 +379,7 @@
     // 双保险：疑似原图与页面预览比字节大小，写更大的那份（防配对错或原图反而更小）
     if (viaOriginal && !viaNative && blobUrl && hasTime()) {
       try {
-        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl });
+        const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl }, tabId);
         if (res && res.ok && res.dataUrl) {
           const preview = await dataUrlAsImageBlob(res.dataUrl);
           if (preview.size > blob.size) {

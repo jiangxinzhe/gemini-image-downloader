@@ -59,20 +59,45 @@ assert.strictEqual(G.isUgcUrl('https://jfk.objects.lifesciences.googleuserconten
 assert.strictEqual(G.isUgcUrl('https://googleusercontent.com.evil.com/x'), false);
 assert.strictEqual(G.isUgcUrl('https://www.gstatic.com/x'), false);
 
-// —— pairPerfCandidates：网络记录候选按顺序配对，不足则不配 ——
-const pairItems = [{ kind: 'generated' }, { kind: 'uploaded' }, { kind: 'generated' }];
+// —— checkImageBlob：MIME 白名单（非 image/* 或空内容判失败） ——
+assert.strictEqual(G.checkImageBlob({ type: 'image/png', size: 100 }), true);
+assert.strictEqual(G.checkImageBlob({ type: 'IMAGE/WEBP', size: 1 }), true);
+assert.strictEqual(G.checkImageBlob({ type: 'text/html', size: 100 }), false);
+assert.strictEqual(G.checkImageBlob({ type: '', size: 100 }), false);
+assert.strictEqual(G.checkImageBlob({ type: 'image/png', size: 0 }), false);
+assert.strictEqual(G.checkImageBlob(null), false);
+
+// —— pairPerfCandidates：baseId 精确匹配优先，剩余按顺序配对（需已知 w/h），候选不足不配 ——
+const pairItems = [
+  { id: 'https://lh3.googleusercontent.com/gg/B', kind: 'generated', w: 100, h: 100 }, // 精确匹配 B
+  { kind: 'uploaded', w: 100, h: 100 },                                              // 上传图不参与
+  { kind: 'generated', w: 100, h: 100 },                                             // 顺序配对剩余候选
+  { kind: 'generated' }                                                              // w/h 未知：不配对
+];
 const pairCands = [
-  { url: 'https://lh3.googleusercontent.com/gg/A=s100', startTime: 20 },
-  { url: 'https://lh3.googleusercontent.com/gg/B=s100', startTime: 10 }
+  { url: 'https://lh3.googleusercontent.com/gg/B=s100', startTime: 20 },
+  { url: 'https://lh3.googleusercontent.com/gg/A=s100', startTime: 10 },
+  { url: 'https://lh3.googleusercontent.com/gg/C=s100', startTime: 30 }
 ];
 const paired = G.pairPerfCandidates(pairItems, pairCands);
-assert.strictEqual(paired[0], 'https://lh3.googleusercontent.com/gg/B=d'); // startTime 排序后 B 在前
+assert.strictEqual(paired[0], 'https://lh3.googleusercontent.com/gg/B=d'); // baseId 精确匹配（跨 startTime 顺序）
 assert.strictEqual(paired[1], '');                                          // 上传图不参与配对
-assert.strictEqual(paired[2], 'https://lh3.googleusercontent.com/gg/A=d');
-// 候选少于生成图时不配对（防止错位）
+assert.strictEqual(paired[2], 'https://lh3.googleusercontent.com/gg/A=d'); // 剩余候选按 startTime 顺序（B 已被精确匹配占用）
+assert.strictEqual(paired[3], '');                                          // w/h 未知不配对（无宽高比校验把关）
+// 顺序配对候选不足时不配（防止错位）；精确匹配不受此限
 assert.deepStrictEqual(
-  G.pairPerfCandidates([{ kind: 'generated' }, { kind: 'generated' }], [{ url: 'https://lh3.googleusercontent.com/gg/A=s100', startTime: 1 }]),
+  G.pairPerfCandidates(
+    [{ kind: 'generated', w: 1, h: 1 }, { kind: 'generated', w: 1, h: 1 }],
+    [{ url: 'https://lh3.googleusercontent.com/gg/A=s100', startTime: 1 }]
+  ),
   ['', '']
+);
+assert.strictEqual(
+  G.pairPerfCandidates(
+    [{ id: 'https://lh3.googleusercontent.com/gg/A', kind: 'generated' }],
+    [{ url: 'https://lh3.googleusercontent.com/gg/A=s100', startTime: 1 }]
+  )[0],
+  'https://lh3.googleusercontent.com/gg/A=d' // w/h 未知但 baseId 精确匹配：允许
 );
 
 console.log('all lib tests passed ✓');

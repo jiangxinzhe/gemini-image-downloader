@@ -74,19 +74,9 @@
       return;
     }
 
-    // 选文件夹直存模式：先看有没有已记住且仍授权的文件夹，有则免交互直接开始
-    let dir = null;
-    try {
-      dir = await GIDLS.idbGet('dir');
-    } catch (e) { /* ignore */ }
-    if (dir) {
-      try {
-        const perm = await dir.queryPermission({ mode: 'readwrite' });
-        if (perm !== 'granted') dir = null;
-      } catch (e) {
-        dir = null; // 句柄失效（目录被删/移动）
-      }
-    }
+    // 选文件夹直存模式：已记住且仍授权、目录仍存在的文件夹 → 免交互直接开始
+    // （getGrantedDir 带 keys() 存在性探测：目录被删/移时引导重新选择，而不是逐张失败）
+    const dir = await GIDLS.getGrantedDir();
 
     if (dir) {
       // 已记住且授权的文件夹：免交互直接开始
@@ -103,10 +93,7 @@
 
 
   async function pickDir() {
-    let dir = null;
-    try {
-      dir = await GIDLS.idbGet('dir');
-    } catch (e) { /* ignore */ }
+    let dir = await GIDLS.getGrantedDir().catch(() => null);
     if (dir) {
       try {
         let perm = await dir.queryPermission({ mode: 'readwrite' });

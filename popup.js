@@ -380,6 +380,7 @@
     const digits = String(chosen.length).length;
     const payload = chosen.map((it, k) => ({
       id: it.id,
+      tabId: tab ? tab.id : 0,
       url: it.origUrl,
       blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
       perfUrl: it.perfUrl || '',

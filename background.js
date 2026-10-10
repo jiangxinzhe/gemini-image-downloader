@@ -21,8 +21,41 @@ const GEMINI_MATCHES = [
   'https://gemini.googleworkspace.com/*'
 ];
 
-// downloadId -> { url, filename }
+// downloadId -> { url, filename, retries }
 const inflight = new Map();
+
+// SW 冷启动恢复：上一批进行中 SW 被回收时，从 session 读回状态与未完结队列。
+// 恢复的 inflight 拿不到后续 onChanged 事件，由 finishRecovered() 兜底结算
+async function restoreState() {
+  try {
+    const { dl } = await chrome.storage.session.get('dl');
+    if (!dl || !dl.running) return;
+    state.running = true;
+    state.total = dl.total;
+    state.settled = dl.settled;
+    state.failed = (dl.failed || []).slice();
+    (dl.pending || []).forEach((p) => inflight.set(p.id, p));
+    setBadge();
+    if (inflight.size) setTimeout(finishRecovered, 30000); // 30s 无事件即视为已死
+  } catch (e) { /* ignore */ }
+}
+
+async function finishRecovered() {
+  if (!state.running) return;
+  if (inflight.size) {
+    for (const rec of inflight.values()) {
+      state.settled++;
+      state.failed.push({ url: rec.url, filename: rec.filename, error: '浏览器重启/SW 回收导致中断' });
+    }
+    inflight.clear();
+  }
+  // inflight 已被 onChanged 清空（恢复的下载其实都完成了）也走这里收尾，
+  // 否则 running 永远为 true，新批次会被"已有任务进行中"拒绝
+  state.running = false;
+  setBadge();
+  await saveState();
+  broadcast({ type: 'GIDL_DL_DONE', total: state.total, failed: state.failed.length });
+}
 
 async function saveState() {
   try {
@@ -31,7 +64,8 @@ async function saveState() {
         running: state.running,
         total: state.total,
         settled: state.settled,
-        failed: state.failed.slice(-20)
+        failed: state.failed.slice(-20),
+        pending: Array.from(inflight.values()) // SW 回收后冷启动恢复队列
       }
     });
   } catch (e) { /* ignore */ }
@@ -106,6 +140,7 @@ async function downloadOne(item, folder) {
       conflictAction: 'uniquify'
     });
     inflight.set(dlId, { url: item.url, filename: path, retries: 0 });
+    await saveState();
   } catch (e) {
     state.settled++;
     state.failed.push({ url: item.url, filename: path, error: String((e && e.message) || e) });
@@ -136,9 +171,15 @@ async function startBatch(items, folder) {
   });
   await Promise.all(workers);
 
-  // 等 onChanged 事件收尾
-  await new Promise((r) => setTimeout(r, 800));
+  // 完成判定：等 onChanged 事件把 inflight 清空（真实完成），带总超时兜底。
+  // 不再用固定 800ms——大图慢网下会提前广播"完成"，后续中断丢统计
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (state.running && inflight.size && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (inflight.size) await finishRecovered(); // 超时兜底结算
 
+  if (!state.running) return; // 已被 finishRecovered 等路径结算过
   state.running = false;
   setBadge();
   await saveState();
@@ -164,6 +205,7 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         });
         inflight.set(nid, { ...rec });
         inflight.delete(delta.id);
+        await saveState();
         return;
       } catch (e) { /* 落入失败统计 */ }
     }
@@ -182,6 +224,9 @@ chrome.downloads.onChanged.addListener(async (delta) => {
   broadcast({ type: 'GIDL_DL_PROGRESS', total: state.total, settled: state.settled, failed: state.failed.length });
   await saveState();
 });
+
+// SW 冷启动恢复上一批进行中的状态与队列
+restoreState();
 
 // —— 缩略图兜底：弹窗里 <img> 加载失败时，后台抓图转 data URL 返回 ——
 const thumbCache = new Map(); // id -> dataUrl
@@ -309,8 +354,23 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== 'gidl-download-original' || !info.srcUrl) return;
+  // blob: 属于页面源，扩展与 downloads 均无法访问——交给内容脚本在页面上下文里取字节
+  if (/^blob:/i.test(info.srcUrl)) {
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { type: 'GIDL_BLOB_DATA', url: info.srcUrl });
+      if (res && res.ok && res.dataUrl) {
+        const cfg0 = await chrome.storage.sync.get({ folder: 'Gemini图片' });
+        await chrome.downloads.download({
+          url: res.dataUrl,
+          filename: G.makePath(cfg0.folder, `gemini_blob_${Date.now()}.png`),
+          conflictAction: 'uniquify'
+        });
+      }
+    } catch (e) { /* 页面不可达：静默 */ }
+    return;
+  }
   const url = G.toOriginalUrl(info.srcUrl);
   if (!G.isUgcUrl(url)) return;
   const cfg = await chrome.storage.sync.get({ folder: 'Gemini图片' });

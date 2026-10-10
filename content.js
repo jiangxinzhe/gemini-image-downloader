@@ -270,6 +270,7 @@
         .filter((it) => selected.has(it.id))
         .map((it) => ({
           id: it.id,
+          tabId: 0, // 由面板所在页发起，接收方 save-lib 无 tabId 时会退回首个 Gemini 标签页
           url: it.origUrl,
           blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
           perfUrl: it.perfUrl || '',
@@ -528,6 +529,7 @@
     const acc = new Map();
     const span = Math.max(1, sc.scrollHeight - sc.clientHeight);
     const step = Math.max(240, Math.floor(sc.clientHeight * 0.9));
+    imgMap = new Map(); // 深扫开始时重建，边扫边填（覆盖到的图会重新 set）
 
     for (let sweep = 0; sweep < 2; sweep++) {
       const down = sweep === 0;
@@ -536,7 +538,7 @@
       let last = -1;
       const started = Date.now();
       for (let i = 0; i < 300; i++) {
-        collectInto(acc);
+        collectInto(acc, deepQueryAll('img'));
         if (acc.size >= MAX_ITEMS) break;
 
         const frac = Math.min(1, Math.max(0, sc.scrollTop / span));
@@ -551,13 +553,13 @@
         const after = sc.scrollTop;
         if (after === last) break; // 已到头
         last = after;
-        if (down && after >= sc.scrollHeight - sc.clientHeight - 2) { collectInto(acc); break; }
-        if (!down && after <= 1) { collectInto(acc); break; }
+        if (down && after >= sc.scrollHeight - sc.clientHeight - 2) { collectInto(acc, deepQueryAll('img')); break; }
+        if (!down && after <= 1) { collectInto(acc, deepQueryAll('img')); break; }
         if (Date.now() - started > 25000) break; // 单轮超时保护
       }
     }
 
-    collectInto(acc);
+    collectInto(acc, deepQueryAll('img'));
     sc.scrollTop = origTop;
     const list = Array.from(acc.values());
     attachPerfCandidates(list);
@@ -589,9 +591,10 @@
     return fallback;
   }
 
-  // 把当前 DOM 里的图片收集进 acc（按 id 去重，保留首次出现顺序）
-  function collectInto(acc) {
-    for (const img of deepQueryAll('img')) {
+  // 把当前 DOM 里的图片收集进 acc（按 id 去重，保留首次出现顺序）。
+  // 每轮收集前重建 imgMap：虚拟化列表换走的 detached <img> 不再被长期持有
+  function collectInto(acc, imgEls) {
+    for (const img of imgEls) {
       const src = img.currentSrc || img.src || '';
       if (!src) continue;
       const id = G.baseId(src);
@@ -616,7 +619,7 @@
       else if (inModel || isGg) kind = 'generated';
       else kind = 'other';
 
-      if (!imgMap.has(id)) imgMap.set(id, img);
+      imgMap.set(id, img);
       const serverUrl = findServerUrl(img); // 页面中留存的原始图片地址（可能为空）
       acc.set(id, {
         id,
@@ -635,7 +638,9 @@
   // 全部列出（生成/上传/其他），弹窗里默认只勾选生成图
   function collect() {
     const acc = new Map();
-    collectInto(acc);
+    const imgEls = deepQueryAll('img');
+    imgMap = new Map(); // 每轮扫描重建，丢弃 detached 节点
+    collectInto(acc, imgEls);
     const list = Array.from(acc.values());
     attachPerfCandidates(list);
     return list;
@@ -724,7 +729,9 @@
       }
       return;
     }
-    // 原生下载截获：点击 Gemini 自己的下载按钮，等待主世界 hook 捕获原图字节
+    // 原生下载截获：点击 Gemini 自己的下载按钮，等待主世界 hook 捕获原图字节。
+    // 校验：捕获须发生在点击之后、且解码出的宽高比与目标图一致——
+    // 不一致（并发加载了别的图）就继续等下一次捕获，直到超时
     if (msg.type === 'GIDL_NATIVE_DOWNLOAD' && msg.id) {
       (async () => {
         try {
@@ -733,16 +740,29 @@
           const btn = findNativeDownloadButton(img);
           if (!btn) { sendResponse({ ok: false, error: 'no-button' }); return; }
           const t0 = Date.now() - 1000; // 时钟余量
-          const capP = waitNativeCapture(t0, msg.minSize || 100000, msg.timeoutMs || 20000);
+          const timeoutMs = msg.timeoutMs || 20000;
+          const endAt = Date.now() + timeoutMs;
           btn.click();
-          const cap = await capP;
-          if (!cap) { sendResponse({ ok: false, error: 'capture-timeout' }); return; }
-          const bytes = await requestNativeBytes(cap.time);
-          if (!bytes || !bytes.ok || !bytes.dataUrl) {
-            sendResponse({ ok: false, error: (bytes && bytes.error) || 'bytes-failed' });
+          while (Date.now() < endAt) {
+            const cap = await waitNativeCapture(t0, msg.minSize || 100000, Math.max(500, endAt - Date.now()));
+            if (!cap) break;
+            const bytes = await requestNativeBytes(cap.time);
+            if (!bytes || !bytes.ok || !bytes.dataUrl) continue; // 读字节失败：等下一次捕获
+            // 宽高比校验（w/h 未知时跳过，由字节大小门槛把关）
+            if (img.naturalWidth && img.naturalHeight) {
+              try {
+                const blob = await (await fetch(bytes.dataUrl)).blob();
+                const bmp = await createImageBitmap(blob);
+                const ratio = img.naturalWidth / img.naturalHeight;
+                const capRatio = bmp.width / bmp.height;
+                bmp.close();
+                if (Math.abs(capRatio - ratio) > Math.max(0.06, ratio * 0.06)) continue; // 错配：别的图
+              } catch (e) { /* 解码失败：按候选继续 */ }
+            }
+            sendResponse({ ok: true, dataUrl: bytes.dataUrl, size: cap.size, url: cap.url });
             return;
           }
-          sendResponse({ ok: true, dataUrl: bytes.dataUrl, size: cap.size, url: cap.url });
+          sendResponse({ ok: false, error: 'capture-timeout' });
         } catch (e) {
           sendResponse({ ok: false, error: String((e && e.message) || e) });
         }
