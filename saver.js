@@ -213,6 +213,12 @@
       failed,
       failedItems.length ? () => runSave({ items: failedItems, title: job.title }, dir) : null
     );
+
+    // 全部成功（含改走浏览器下载的批次，队列在后台自跑）：自动关闭保存页
+    // （体验上等同"没离开过 Gemini 页面"）；有失败项则停留展示原因与重试入口
+    if (!failed) {
+      setTimeout(() => window.close(), 1200);
+    }
   }
 
 

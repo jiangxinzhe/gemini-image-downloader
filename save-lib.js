@@ -405,22 +405,26 @@
     }
 
     // 5) 原生下载截获：触发 Gemini 自己的下载按钮（「下载完整尺寸的图片」），
-    // hook 拦截它抓取的原图字节。内存图的主恢复通道，串行执行防字节错配
+    // hook 拦截它抓取的原图字节。内存图的主恢复通道，串行执行防字节错配。
+    // 失败自动重试一次（首次点击时按钮可能尚未完全就绪）
     if (!blob && hasTime() && item.id && (isMemorySrc || blobUrl)) {
-      let capErr = '';
-      try {
-        const r = (nativeChain = nativeChain.then(() => nativeCapture(item), () => nativeCapture(item)));
-        const got = await r;
-        if (got && got.blob) {
-          blob = got.blob;
-          viaOriginal = true;
-          viaNative = true;
-          err = '';
-        } else if (got && got.error) {
-          capErr = got.error;
-        }
-      } catch (e) { capErr = String((e && e.message) || e); }
-      if (!blob) note('原生截获', capErr || 'capture-failed');
+      for (let attempt = 0; attempt < 2 && !blob && hasTime(); attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 1500));
+        let capErr = '';
+        try {
+          const r = (nativeChain = nativeChain.then(() => nativeCapture(item), () => nativeCapture(item)));
+          const got = await r;
+          if (got && got.blob) {
+            blob = got.blob;
+            viaOriginal = true;
+            viaNative = true;
+            err = '';
+          } else if (got && got.error) {
+            capErr = got.error;
+          }
+        } catch (e) { capErr = String((e && e.message) || e); }
+        if (!blob) note('原生截获', (attempt ? '重试仍失败:' : '') + (capErr || 'capture-failed'));
+      }
     }
 
     // 6) 页面内存预览图（blob，最后兜底）
