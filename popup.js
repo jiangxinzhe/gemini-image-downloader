@@ -397,114 +397,20 @@
     }
   }
 
-  // —— 选文件夹直存：全部在弹窗内完成 ——
+  // —— 选文件夹直存：统一转交 saver 标签页执行 ——
+  // 弹窗是焦点敏感窗口：原生截获会触发 Gemini 自身下载，其系统"另存为"对话框
+  // 一旦弹出必然抢焦点关闭弹窗、批量中断（抑制 hook 三层均被绕过，JS 层无解）。
+  // 标签页不受对话框影响（实测验证），saver 复用同一 save-lib 管线
   async function startPickerSave(payload) {
-    dlBusy = true;
-    updateFooter();
-    showProgress(0, payload.length);
-    els.status.textContent = '准备保存…';
-
-    // 先登记任务：若弹窗中途被系统关闭，下次打开可一键续存
     await chrome.storage.session.set({ saveJob: { items: payload, title, mode: 'picker', runner: 'popup' } }).catch(() => {});
-
-    let dir = await GIDLS.getGrantedDir();
-    if (!dir) {
-      els.status.textContent = '首次使用：请在弹出的对话框中选择保存文件夹（只需一次）…';
-      try {
-        dir = await window.showDirectoryPicker({
-          id: 'gidl-images',
-          mode: 'readwrite',
-          startIn: 'downloads'
-        });
-        await GIDLS.idbSet('dir', dir);
-        hasStoredDir = true;
-        updateModeUi();
-      } catch (e) {
-        await chrome.storage.session.remove('saveJob').catch(() => {});
-        dlBusy = false;
-        updateFooter();
-        hideProgress();
-        els.status.textContent = (e && e.name === 'AbortError')
-          ? '已取消。可再次点击「下载选中」并选择文件夹。'
-          : '选择文件夹失败：' + String((e && e.message) || e);
-        return;
-      }
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL('saver.html') });
+      window.close();
+    } catch (e) {
+      els.status.textContent = '无法打开保存页：' + String((e && e.message) || e);
+      await chrome.storage.session.remove('saveJob').catch(() => {});
     }
-    await runSaveLoop(dir, payload);
   }
-
-  async function runSaveLoop(dir, payload) {
-    // saveJob 只记剩余未完成项：每张完结即回写，弹窗中途被关闭后续存只跑剩余的；
-    // runner 标记供 saver 判断任务归属（弹窗为单实例，标记残留即意味着弹窗已死、任务成孤儿）
-    let remaining = payload.slice();
-    const persistJob = () => {
-      const p = chrome.storage.session.set({ saveJob: { items: remaining, title, mode: 'picker', runner: 'popup' } });
-      if (p && p.catch) p.catch(() => {});
-    };
-    const taken = new Set();
-    let done = 0;
-    let viaBrowser = 0;
-    let origCount = 0;
-    let failed = 0;
-    let firstError = '';
-    let firstAttempts = null;
-    let totalBytes = 0;
-    let idx = 0;
-    const CONCURRENCY = 3;
-
-    els.status.textContent = dir.name
-      ? `正在保存到「${dir.name}」…（请保持本弹窗打开）`
-      : '正在保存…（请保持本弹窗打开）';
-
-    const workers = Array.from({ length: Math.min(CONCURRENCY, payload.length) }, async () => {
-      for (;;) {
-        const i = idx++;
-        if (i >= payload.length) return;
-        const it = payload[i];
-        try {
-          const r = await GIDLS.saveToDir(dir, it, taken);
-          remaining = remaining.filter((x) => x !== it);
-          if (!r || r.via === 'browser') viaBrowser++;
-          else {
-            done++;
-            totalBytes += (r.bytes || 0);
-            if (r.orig) origCount++;
-            if (!firstAttempts && r.attempts) firstAttempts = r.attempts;
-          }
-        } catch (e) {
-          failed++;
-          if (!firstError) firstError = String((e && e.message) || e);
-          if (e && (e.name === 'NotFoundError' || /保存位置已失效/.test(firstError))) {
-            hasStoredDir = false;
-            await GIDLS.idbSet('dir', null).catch(() => {});
-            updateModeUi();
-          }
-        }
-        persistJob();
-        showProgress(done + viaBrowser + failed, payload.length);
-        if (failed) els.status.textContent = `已保存 ${done + viaBrowser}，失败 ${failed}…`;
-      }
-    });
-    await Promise.all(workers);
-
-    // 正常跑完（含失败项，弹窗无重试入口）：清除任务；中断场景由上面的增量回写兜住
-    await chrome.storage.session.remove('saveJob').catch(() => {});
-    dlBusy = false;
-    updateFooter();
-    hideProgress();
-
-    const parts = [];
-    if (done) parts.push(`✔ 已保存 ${done} 张到「${dir.name || '所选文件夹'}」（原图 ${origCount} · 页面图 ${done - origCount}${totalBytes ? ` · 共 ${(totalBytes / 1048576).toFixed(1)}MB` : ''}）`);
-    if (viaBrowser) parts.push(`${viaBrowser} 张改走浏览器下载（位于「下载/${dir.name}」）`);
-    if (failed) parts.push(`✘ 失败 ${failed} 张`);
-    if (done > 0 && origCount === 0 && firstAttempts) {
-      const chain = firstAttempts.map((x) => `${x.layer}:${x.error}`).join(' → ');
-      if (chain) parts.push(`⚠ 原因链：${chain}`);
-    }
-    els.status.textContent = parts.join('，') + (firstError ? `。首个错误：${firstError}` : '');
-  }
-
-
 
   function startBrowserDownloads(payload) {
     dlBusy = true;
