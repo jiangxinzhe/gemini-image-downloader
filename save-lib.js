@@ -129,9 +129,9 @@
         world: 'MAIN',
         func: () => {
           // 版本化：旧版 hook 已存在时也要升级（扩展更新后页面未刷新的场景）。
-          // 旧包装仍在链上会多发捕获事件，按 time/size 匹配无影响
-          if (window.__gidlHookVer === 2) return;
-          window.__gidlHookVer = 2;
+          // v3：抑制覆盖 showSaveFilePicker 与 dispatchEvent 派发的锚点点击
+          if (window.__gidlHookVer === 3) return;
+          window.__gidlHookVer = 3;
           // 只保留最近 10 分钟内的捕获：原生截获为短时操作，过期 blob 及早释放，避免长会话内存驻留
           const KEEP_MS = 10 * 60 * 1000;
           const state = { blobs: [] };
@@ -202,6 +202,29 @@
             }
             return origAnchorClick.apply(this, arguments);
           };
+          // 兜底二：dispatchEvent 派发的点击不经过 prototype.click，但都走 dispatchEvent 本身
+          const origDispatch = EventTarget.prototype.dispatchEvent;
+          EventTarget.prototype.dispatchEvent = function (ev) {
+            try {
+              if (ev && ev.type === 'click' && Date.now() <= suppressUntil
+                  && this instanceof HTMLAnchorElement
+                  && (this.hasAttribute('download') || /^blob:/i.test(this.getAttribute('href') || ''))) {
+                return false; // 吞掉
+              }
+            } catch (e) { /* ignore */ }
+            return origDispatch.apply(this, arguments);
+          };
+          // 兜底三：Gemini 也可能走 File System Access 的另存对话框（外观与系统另存为一致）。
+          // 抑制期内直接拒绝并模拟用户取消
+          if (typeof window.showSaveFilePicker === 'function') {
+            const origSavePicker = window.showSaveFilePicker.bind(window);
+            window.showSaveFilePicker = function (...args) {
+              if (Date.now() <= suppressUntil) {
+                return Promise.reject(new DOMException('The user aborted a request.', 'AbortError'));
+              }
+              return origSavePicker(...args);
+            };
+          }
           document.addEventListener('__gidl_suppress', (e) => {
             try {
               const d = JSON.parse(e.detail);

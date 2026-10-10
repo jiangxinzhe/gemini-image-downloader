@@ -1,5 +1,9 @@
 # 更新日志
 
+## 1.9.10（2026-10-10）
+
+- **修复**：抑制仍不生效——Gemini 的另存对话框并非 `<a download>` 点击：可能走 `showSaveFilePicker()`（File System Access 另存框，外观与系统对话框一致）或 `dispatchEvent()` 派发点击（绕过原型 click 补丁）。现 hook 升级 v3：抑制期内 `showSaveFilePicker` 直接以 AbortError 拒绝（等同用户取消）、`dispatchEvent` 对锚点点击的派发一并拦截
+
 ## 1.9.9（2026-10-10）
 
 - **修复**：1.9.8 的下载抑制对部分页面不生效——①扩展更新后旧版 hook 仍在页面里运行（无抑制能力）且新版因 `__gidlHook` 已存在而跳过注入；②下载按钮藏于 shadow DOM，`e.target` 被重定向到宿主导致拦截落空。现 hook 版本化（旧版自动升级重注入），拦截改用 `composedPath()` 穿透 shadow root，并补丁 `HTMLAnchorElement.prototype.click` 兜底程序化点击
