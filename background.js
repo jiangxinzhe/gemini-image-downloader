@@ -356,24 +356,34 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== 'gidl-download-original' || !info.srcUrl) return;
-  // blob: 属于页面源，扩展与 downloads 均无法访问——交给内容脚本在页面上下文里取字节
+  const cfg = await chrome.storage.sync.get({ folder: 'Gemini图片' });
+  // blob: 属于页面源，扩展与 downloads 均无法访问——在页面上下文里取字节：
+  // 优先 Gemini 自带下载链接（原图），退回右键图片自身的 blob 字节
   if (/^blob:/i.test(info.srcUrl)) {
     try {
-      const res = await chrome.tabs.sendMessage(tab.id, { type: 'GIDL_BLOB_DATA', url: info.srcUrl });
-      if (res && res.ok && res.dataUrl) {
-        const cfg0 = await chrome.storage.sync.get({ folder: 'Gemini图片' });
+      const res = await chrome.tabs.sendMessage(tab.id, {
+        type: 'GIDL_DL_LINK_DATA',
+        id: '',
+        link: info.srcUrl
+      });
+      const r2 = (res && res.ok && res.dataUrl)
+        ? res
+        : await chrome.tabs.sendMessage(tab.id, { type: 'GIDL_BLOB_DATA', url: info.srcUrl });
+      if (r2 && r2.ok && r2.dataUrl) {
+        const ext = G.extFromMime(r2.type || '') || '.png';
+        const tail = String(Date.now()).slice(-6);
         await chrome.downloads.download({
-          url: res.dataUrl,
-          filename: G.makePath(cfg0.folder, `gemini_blob_${Date.now()}.png`),
+          url: r2.dataUrl,
+          filename: G.makePath(cfg.folder, `gemini_blob_${tail}${ext}`),
           conflictAction: 'uniquify'
         });
+        return;
       }
     } catch (e) { /* 页面不可达：静默 */ }
     return;
   }
   const url = G.toOriginalUrl(info.srcUrl);
   if (!G.isUgcUrl(url)) return;
-  const cfg = await chrome.storage.sync.get({ folder: 'Gemini图片' });
   const ext = await fetchExt(url);
   const tail = G.baseId(url).split('/').pop().slice(-10) || String(Date.now());
   const name = `gemini_${tail}${ext || '.png'}`;

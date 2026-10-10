@@ -259,10 +259,11 @@
       return b;
     };
 
-    // 1) 本页直接抓取（服务器原图地址）
+    // 1) 本页直接抓取（服务器原图地址）；=d/服务器地址直连成功即为原图
     if (!blob) {
       try {
         blob = await fetchAsBlob(url);
+        viaOriginal = G.isUgcUrl(url);
       } catch (e) {
         blob = null;
         err = String((e && e.message) || e);
@@ -276,6 +277,7 @@
         const res = await chrome.runtime.sendMessage({ type: 'GIDL_FETCH', url });
         if (res && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
+          viaOriginal = G.isUgcUrl(url);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
@@ -292,6 +294,7 @@
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url }, tabId);
         if (res && res.ok && res.dataUrl) {
           blob = await dataUrlAsImageBlob(res.dataUrl);
+          viaOriginal = G.isUgcUrl(url);
           err = '';
         } else if (res && res.error && !err) {
           err = res.error;
@@ -320,6 +323,23 @@
       }
     }
 
+    // 4.5) Gemini 自带下载链接（页面"下载"按钮的数据源，多为 blob 原图）
+    if (!blob && item.dlLink && item.id && hasTime()) {
+      try {
+        const res = await sendToGemini({ type: 'GIDL_DL_LINK_DATA', id: item.id, link: item.dlLink }, tabId);
+        if (res && res.ok && res.dataUrl) {
+          blob = await dataUrlAsImageBlob(res.dataUrl);
+          viaOriginal = true;
+          err = '';
+        } else if (res && res.error && !err) {
+          err = res.error;
+          note('下载链接', res.error);
+        }
+      } catch (e) {
+        if (!err) { err = String((e && e.message) || e); note('下载链接', err); }
+      }
+    }
+
     // 5) 原生下载截获：触发 Gemini 自己的下载按钮，hook 拦截它抓取的原图字节
     if (!blob && hasTime() && item.blobUrl && item.id) {
       try {
@@ -332,6 +352,7 @@
           err = '';
         }
       } catch (e) { /* ignore */ }
+      if (!blob) note('原生截获', 'capture-failed');
     }
 
     // 6) 页面内存预览图（blob，最后兜底）
@@ -377,7 +398,7 @@
     }
 
     // 双保险：疑似原图与页面预览比字节大小，写更大的那份（防配对错或原图反而更小）
-    if (viaOriginal && !viaNative && blobUrl && hasTime()) {
+    if (viaOriginal && blobUrl && hasTime()) {
       try {
         const res = await sendToGemini({ type: 'GIDL_BLOB_DATA', url: blobUrl }, tabId);
         if (res && res.ok && res.dataUrl) {
@@ -405,7 +426,7 @@
       }
       throw e;
     }
-    return { via: 'direct', orig: viaOriginal, native: viaNative, err, attempts: attempts.slice(0, 6) };
+    return { via: 'direct', orig: viaOriginal, native: viaNative, err, attempts: attempts.slice(0, 6), bytes: blob.size };
   }
 
   globalThis.GIDLS = {

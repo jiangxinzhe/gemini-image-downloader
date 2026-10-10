@@ -35,8 +35,8 @@ function stubChrome({ fetchImpl, msgReply, downloaded, geminiTabs } = {}) {
     runtime: { sendMessage: async (m) => { runtimeMsgs.push(m); return msgReply ? msgReply(m) : null; } },
     scripting: { executeScript: async () => [] },
     tabs: {
-      query: async () => geminiTabs || [],
-      sendMessage: async () => { throw new Error('no receiver'); }
+      query: async () => geminiTabs !== undefined ? geminiTabs : [{ id: 1 }],
+      sendMessage: async (id, m) => (msgReply ? msgReply(m) : null)
     }
   };
   globalThis.fetch = fetchImpl;
@@ -59,13 +59,14 @@ async function t(name, fn) {
 }
 
 (async () => {
-  // —— 1. 第 1 层直连成功 → 直存写盘，via=direct ——
-  await t('L1 直连成功：写盘 via=direct', async () => {
+  // —— 1. 第 1 层直连成功 → 直存写盘，via=direct，=d 服务器地址计为原图 ——
+  await t('L1 直连成功：写盘 via=direct + ugc 地址计 orig', async () => {
     stubChrome({ fetchImpl: async (u) => ({ ok: true, blob: async () => makeBlob('image/png', 500) }) });
     const written = [];
     const r = await freshLib().saveToDir(makeDir(new Set(), written), { ...ITEM }, new Set());
     assert.strictEqual(r.via, 'direct');
-    assert.strictEqual(r.orig, false);
+    assert.strictEqual(r.orig, true, 'ugc =d 地址直连成功应计为原图');
+    assert.strictEqual(r.bytes, 500);
     assert.strictEqual(written.length, 1);
     assert.ok(written[0].startsWith('t_1'));
   });
@@ -105,6 +106,28 @@ async function t(name, fn) {
     });
     const r = await freshLib().saveToDir(makeDir(new Set(), []), { ...ITEM }, new Set());
     assert.strictEqual(r.via, 'browser'); // L1/L2 都被判非图片 → 走兜底
+  });
+
+  // —— 4b. dlLink 通道：下载链接返回图片 → 直存 + orig + 原因链含各层失败 ——
+  await t('dlLink 通道（GIDL_DL_LINK_DATA）：直存成功计 orig', async () => {
+    stubChrome({
+      fetchImpl: async (u) => {
+        if (String(u).startsWith('data:image')) return { ok: true, blob: async () => makeBlob('image/png', 2000) };
+        throw new Error('fetch failed'); // L1 直连失败
+      },
+      msgReply: (m) => {
+        if (m.type === 'GIDL_FETCH') return { error: 'stub' };
+        if (m.type === 'GIDL_DL_LINK_DATA') return { ok: true, dataUrl: PNG_DATAURL, size: 2000 };
+        return null;
+      }
+    });
+    const lib = freshLib();
+    const written = [];
+    const r = await lib.saveToDir(makeDir(new Set(), written), { ...ITEM, dlLink: 'blob:https://gemini.google.com/dl' }, new Set());
+    assert.strictEqual(r.via, 'direct');
+    assert.strictEqual(r.orig, true, '下载链接字节应计为原图');
+    assert.strictEqual(written.length, 1);
+    assert.ok(r.attempts.some((a) => a.layer === '弹窗直连'), '失败层应进原因链');
   });
 
   // —— 5. L2 dataUrl 返回真图片 → 直存成功 ——

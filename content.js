@@ -273,6 +273,7 @@
           tabId: 0, // 由面板所在页发起，接收方 save-lib 无 tabId 时会退回首个 Gemini 标签页
           url: it.origUrl,
           blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
+          dlLink: it.dlLink || '',
           perfUrl: it.perfUrl || '',
           w: it.w || 0,
           h: it.h || 0,
@@ -566,6 +567,31 @@
     return list;
   }
 
+  // 围绕图片找 Gemini 自带下载按钮背后的下载链接（<a href> / [download]）。
+  // 该链接（多为 blob:）就是页面"下载"按钮的数据源，很可能是原图
+  function findDownloadLink(imgEl) {
+    let el = imgEl;
+    for (let depth = 0; el && depth < 8; depth++) {
+      try {
+        for (const a of el.querySelectorAll('a[href]')) {
+          const h = a.getAttribute('href') || '';
+          if (/^(blob:|data:image\/)/i.test(h)) return h;
+        }
+        for (const d of el.querySelectorAll('[download]')) {
+          const h = d.getAttribute('href') || (d.tagName === 'A' ? '' : (d.querySelector && d.querySelector('a[href]') ? d.querySelector('a[href]').getAttribute('href') : ''));
+          if (h && /^(blob:|data:image\/)/i.test(h)) return h;
+        }
+      } catch (e) { /* ignore */ }
+      let next = el.parentElement;
+      if (!next) {
+        const root = el.getRootNode && el.getRootNode();
+        next = root && root.host ? root.host : null;
+      }
+      el = next;
+    }
+    return '';
+  }
+
   // 在图片周边 DOM 里寻找原始图片的服务器地址（Gemini 下载按钮所用的来源）。
   // 从图片自身往外逐层查找：第一层只出现 1 个地址的直接采用；多个时优先带 /gg/ 路径的。
   function findServerUrl(imgEl) {
@@ -621,11 +647,13 @@
 
       imgMap.set(id, img);
       const serverUrl = findServerUrl(img); // 页面中留存的原始图片地址（可能为空）
+      const dlLink = isBlob || isData ? findDownloadLink(img) : ''; // blob 图专属：页面下载按钮的链接
       acc.set(id, {
         id,
         src,
         origUrl: serverUrl || (isBlob || isData ? src : G.toOriginalUrl(src)),
         serverUrl,
+        dlLink,
         kind,
         w,
         h,
@@ -697,6 +725,26 @@
           } catch (e) { /* 试下一个候选 */ }
         }
         sendResponse({ ok: false, error: lastErr || 'no-match' });
+      })();
+      return true; // 异步响应
+    }
+    // 取 Gemini 自带下载链接（多为 blob:）的字节——页面"下载"按钮的数据源，很可能是原图
+    if (msg.type === 'GIDL_DL_LINK_DATA' && msg.id) {
+      (async () => {
+        try {
+          const img = imgMap.get(msg.id);
+          let link = msg.link || '';
+          if (!link && img) link = findDownloadLink(img);
+          if (!link) { sendResponse({ ok: false, error: 'no-dl-link' }); return; }
+          const resp = await fetch(link);
+          if (!resp.ok) { sendResponse({ ok: false, error: 'HTTP ' + resp.status }); return; }
+          const blob = await resp.blob();
+          if (blob.size > 40 * 1024 * 1024) { sendResponse({ ok: false, error: '文件超过 40MB' }); return; }
+          const dataUrl = await blobToDataUrl(blob);
+          sendResponse({ ok: true, dataUrl, type: blob.type, size: blob.size });
+        } catch (e) {
+          sendResponse({ ok: false, error: String((e && e.message) || e) });
+        }
       })();
       return true; // 异步响应
     }

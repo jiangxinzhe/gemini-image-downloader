@@ -160,6 +160,7 @@
     let failed = 0;
     let firstError = '';
     let firstAttempts = null;
+    let totalBytes = 0;
     const failedItems = [];
     let idx = 0;
     const CONCURRENCY = 3;
@@ -175,6 +176,7 @@
           if (!r || r.via === 'browser') viaBrowser++;
           else {
             done++;
+            totalBytes += (r.bytes || 0);
             if (r.orig) origCount++;
           }
         } catch (e) {
@@ -196,7 +198,7 @@
     await chrome.storage.session.remove('saveJob').catch(() => {});
 
     const parts = [];
-    if (done) parts.push(`✔ 直存 ${done} 张到「${dir.name || '所选文件夹'}」（原图 ${origCount} · 页面图 ${done - origCount}）`);
+    if (done) parts.push(`✔ 直存 ${done} 张到「${dir.name || '所选文件夹'}」（原图 ${origCount} · 页面图 ${done - origCount}${totalBytes ? ` · 共 ${(totalBytes / 1048576).toFixed(1)}MB` : ''}）`);
     if (viaBrowser) parts.push(`${viaBrowser} 张改走浏览器下载，位于「下载/${dir.name}」文件夹`);
     if (failed) parts.push(`✘ 失败 ${failed} 张`);
     const chain = firstAttempts && firstAttempts.length
