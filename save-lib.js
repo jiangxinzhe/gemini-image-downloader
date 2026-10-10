@@ -128,7 +128,10 @@
         target: { tabId: tid },
         world: 'MAIN',
         func: () => {
-          if (window.__gidlHook) return;
+          // 版本化：旧版 hook 已存在时也要升级（扩展更新后页面未刷新的场景）。
+          // 旧包装仍在链上会多发捕获事件，按 time/size 匹配无影响
+          if (window.__gidlHookVer === 2) return;
+          window.__gidlHookVer = 2;
           // 只保留最近 10 分钟内的捕获：原生截获为短时操作，过期 blob 及早释放，避免长会话内存驻留
           const KEEP_MS = 10 * 60 * 1000;
           const state = { blobs: [] };
@@ -171,16 +174,34 @@
             return u;
           };
           // 下载抑制窗口：截获期间 Gemini 自己也会发起 <a download> 下载（弹系统另存为框、
-          // 抢焦点致弹窗中断、默认下载目录多一份重复文件）。窗口期内吞掉这类点击的默认行为
+          // 抢焦点致弹窗中断、默认下载目录多一份重复文件）。窗口期内吞掉这类点击的默认行为。
+          // composedPath 穿透开放 shadow root（按钮多藏在 shadow 里，e.target 会被重定向到宿主）
           let suppressUntil = 0;
+          const hitSuppressedLink = (e) => {
+            if (Date.now() > suppressUntil) return null;
+            const path = (typeof e.composedPath === 'function' && e.composedPath()) || [];
+            for (const n of path) {
+              if (n && n.tagName === 'A') {
+                const h = n.getAttribute('href') || '';
+                if (n.hasAttribute('download') || /^blob:/i.test(h) || /^data:image\//i.test(h)) return n;
+              }
+            }
+            return null;
+          };
           document.addEventListener('click', (e) => {
-            if (Date.now() > suppressUntil) return;
-            const a = e.target && e.target.closest ? e.target.closest('a[download], a[href^="blob:"]') : null;
-            if (a) {
+            if (hitSuppressedLink(e)) {
               e.preventDefault();
               e.stopPropagation();
             }
           }, true);
+          // 兜底补丁：无论按钮藏在哪个 shadow root，程序化 a.click() 都从这里过
+          const origAnchorClick = HTMLAnchorElement.prototype.click;
+          HTMLAnchorElement.prototype.click = function () {
+            if (Date.now() <= suppressUntil && (this.hasAttribute('download') || /^blob:/i.test(this.getAttribute('href') || ''))) {
+              return; // 吞掉
+            }
+            return origAnchorClick.apply(this, arguments);
+          };
           document.addEventListener('__gidl_suppress', (e) => {
             try {
               const d = JSON.parse(e.detail);
