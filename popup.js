@@ -26,6 +26,8 @@
     changeDir: $('changeDir'),
     resume: $('resume'),
     pickInPage: $('pickInPage'),
+    quality: $('quality'),
+    qualityNote: $('qualityNote'),
     selAll: $('btnSelectAll'),
     selNone: $('btnSelectNone')
   };
@@ -53,10 +55,12 @@
   async function init() {
     const cfg = await chrome.storage.sync.get({
       folder: 'Gemini图片',
-      saveMode: 'picker'
+      saveMode: 'picker',
+      quality: 'page'
     });
     els.folder.value = cfg.folder || 'Gemini图片';
     els.mode.value = cfg.saveMode === 'downloads' ? 'downloads' : 'picker';
+    if (els.quality) els.quality.value = cfg.quality === 'orig' ? 'orig' : 'page';
 
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -73,6 +77,7 @@
     }
 
     bindEvents();
+    updateQualityUi();
     restoreDlState();
     await refreshStoredDir();
     showResumeEntry();
@@ -90,6 +95,12 @@
     els.folder.addEventListener('change', async () => {
       await chrome.storage.sync.set({ folder: els.folder.value.trim() || 'Gemini图片' });
     });
+    if (els.quality) {
+      els.quality.addEventListener('change', async () => {
+        await chrome.storage.sync.set({ quality: els.quality.value });
+        updateQualityUi();
+      });
+    }
     els.settingsHint.addEventListener('click', () => {
       chrome.tabs.create({ url: 'chrome://settings/downloads' });
     });
@@ -122,6 +133,15 @@
       syncSelection();
     });
     els.dl.addEventListener('click', startDownload);
+  }
+
+  // —— 画质档说明文案 ——
+  const QUALITY_NOTE = {
+    orig: '原图档：每张将模拟点击 Gemini「下载完整尺寸的图片」按钮截获原图，单张 2~20 秒，失败自动落网页图并在汇总标注。',
+    page: '网页图档：直接保存页面上已显示的图片，几乎瞬时完成；文件较小（约百 KB 级）。'
+  };
+  function updateQualityUi() {
+    if (els.qualityNote) els.qualityNote.textContent = QUALITY_NOTE[els.quality.value] || '';
   }
 
   // —— 保存方式 ——
@@ -265,6 +285,14 @@
       mark.textContent = KIND_MARK[it.kind] || '•';
       card.appendChild(mark);
 
+      // 预期画质角标（当前档位；保存结果以汇总文字为准）
+      if (els.quality) {
+        const q = document.createElement('span');
+        q.className = 'q' + (els.quality.value === 'orig' ? ' orig' : '');
+        q.textContent = els.quality.value === 'orig' ? '原图' : '页面';
+        card.appendChild(q);
+      }
+
       const open = document.createElement('a');
       open.className = 'open';
       open.textContent = '↗';
@@ -373,14 +401,17 @@
     if (!chosen.length || dlBusy) return;
     await chrome.storage.sync.set({
       folder: els.folder.value.trim() || 'Gemini图片',
-      saveMode: els.mode.value
+      saveMode: els.mode.value,
+      quality: els.quality ? els.quality.value : 'page'
     });
 
     const base = G.sanitizeName(title || 'gemini', 40);
     const digits = String(chosen.length).length;
+    const quality = els.quality ? els.quality.value : 'page';
     const payload = chosen.map((it, k) => ({
       id: it.id,
       tabId: tab ? tab.id : 0,
+      quality,
       url: it.origUrl,
       blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
       dlLink: it.dlLink || '',

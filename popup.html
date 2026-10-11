@@ -31,6 +31,17 @@
     </label>
   </div>
 
+  <div class="seg-wrap">
+    <span class="lbl" title="原图=完整尺寸（需逐张截获，较慢）；网页图=页面预览档（瞬时）">画质</span>
+    <div class="seg">
+      <select id="quality" class="seg-select">
+        <option value="page">网页图（快）</option>
+        <option value="orig">原图（完整尺寸）</option>
+      </select>
+    </div>
+  </div>
+  <div class="quality-note" id="qualityNote"></div>
+
   <div class="actions">
     <button class="btn" id="btnDeep" title="自动滚动到对话底部，触发所有图片加载后再扫描">⬇ 滚动加载并扫描</button>
     <button class="btn" id="btnSelectAll">全选</button>

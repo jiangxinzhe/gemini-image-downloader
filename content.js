@@ -244,7 +244,7 @@
   }
 
   // 确认选择：同步到弹窗；downloadNow 时组装任务并打开保存页
-  function finishPanel(downloadNow) {
+  async function finishPanel(downloadNow) {
     if (!panelState) return;
     const { items, selected, title } = panelState;
     const ids = items.filter((it) => selected.has(it.id)).map((it) => it.id);
@@ -266,11 +266,22 @@
       const base = globalThis.GIDL.sanitizeName(title || 'gemini', 40);
       const digits = String(ids.length).length;
       let k = 0;
+      // 画质档与弹窗一致（storage.sync，默认网页图快档）
+      let quality = 'page';
+      try {
+        const cfg = await new Promise((resolve) => {
+          try {
+            chrome.storage.sync.get({ quality: 'page' }, (r) => resolve(r || { quality: 'page' }));
+          } catch (e) { resolve({ quality: 'page' }); }
+        });
+        quality = cfg.quality === 'orig' ? 'orig' : 'page';
+      } catch (e) { /* 默认 page */ }
       const picked = items
         .filter((it) => selected.has(it.id))
         .map((it) => ({
           id: it.id,
           tabId: 0, // 由面板所在页发起，接收方 save-lib 无 tabId 时会退回首个 Gemini 标签页
+          quality,
           url: it.origUrl,
           blobUrl: /^(blob:|data:image\/)/i.test(it.src || '') ? it.src : '',
           dlLink: it.dlLink || '',

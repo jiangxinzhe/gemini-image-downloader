@@ -177,6 +177,50 @@ async function t(name, fn) {
     assert.ok(r.attempts.some((a) => a.layer === '原生截获' && a.error === 'no-button'), '应透出 no-button 具体原因');
   });
 
+  // —— 4e. 网页图快档：内存图跳过 dlLink/截获，直落页面字节层 ——
+  await t('quality=page：内存图不走恢复层，直接取页面字节', async () => {
+    let dlLinkAsked = false;
+    let nativeAsked = false;
+    stubChrome({
+      fetchImpl: async (u) => {
+        if (String(u).startsWith('data:image')) return { ok: true, blob: async () => makeBlob('image/png', 300) };
+        throw new Error('fetch failed');
+      },
+      msgReply: (m) => {
+        if (m.type === 'GIDL_FETCH') return { error: 'stub' };
+        if (m.type === 'GIDL_DL_LINK_DATA') { dlLinkAsked = true; return { ok: true, dataUrl: PNG_DATAURL }; }
+        if (m.type === 'GIDL_NATIVE_DOWNLOAD') { nativeAsked = true; return { ok: true, dataUrl: PNG_DATAURL }; }
+        if (m.type === 'GIDL_BLOB_DATA') return { ok: true, dataUrl: PNG_DATAURL };
+        return null;
+      }
+    });
+    const written = [];
+    const r = await freshLib().saveToDir(
+      makeDir(new Set(), written),
+      { ...ITEM, quality: 'page', url: 'blob:https://gemini.google.com/x', blobUrl: 'blob:https://gemini.google.com/x', dlLink: 'blob:https://gemini.google.com/dl' },
+      new Set()
+    );
+    assert.strictEqual(r.via, 'direct');
+    assert.strictEqual(r.orig, false, '快档不算原图');
+    assert.strictEqual(dlLinkAsked, false, '快档不得请求下载链接');
+    assert.strictEqual(nativeAsked, false, '快档不得触发原生截获');
+  });
+
+  // —— 4f. 原图档（缺省）行为不变：仍走恢复层 ——
+  await t('quality=orig（缺省）：恢复层照常工作', async () => {
+    stubChrome({
+      fetchImpl: async (u) => ({ ok: true, blob: async () => makeBlob('image/png', 2000) }),
+      msgReply: (m) => (m.type === 'GIDL_DL_LINK_DATA' ? { ok: true, dataUrl: PNG_DATAURL } : { error: 'stub' })
+    });
+    const r = await freshLib().saveToDir(
+      makeDir(new Set(), []),
+      { ...ITEM, dlLink: 'blob:https://gemini.google.com/dl' },
+      new Set()
+    );
+    assert.strictEqual(r.via, 'direct');
+    assert.strictEqual(r.orig, true);
+  });
+
   // —— 5. L2 dataUrl 返回真图片 → 直存成功 ——
   await t('L2 后台 dataUrl（image/png）：直存成功', async () => {
     stubChrome({

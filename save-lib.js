@@ -306,8 +306,10 @@
     const url = item.url;
     const blobUrl = item.blobUrl || '';
     const isBlobSrc = /^blob:/i.test(url);
-    // 页面内存图（data:/blob:）只是兜底画质——先试原图恢复通道，最后才落内存图
+    // 页面内存图（data:/blob:）只是兜底画质——先试原图恢复通道，最后才落内存图；
+    // 用户选「网页图（快）」档时跳过全部恢复层，直取页面字节
     const isMemorySrc = isBlobSrc || /^data:image\//i.test(url);
+    const wantOrig = item.quality !== 'page'; // 缺省视为原图档（saver 旧任务兼容）
     const tabId = item.tabId || 0; // 页面通道定向：扫描所在标签页
     let blob = null;
     let viaOriginal = false;
@@ -377,7 +379,7 @@
     }
 
     // 4) 网络记录中的原图（宽高比校验通过才采用）
-    if (!blob && item.perfUrl && hasTime()) {
+    if (!blob && wantOrig && item.perfUrl && hasTime()) {
       try {
         const ratio = item.w && item.h ? item.w / item.h : 0;
         const res = await sendToGemini({ type: 'GIDL_FETCH_BEST', urls: [item.perfUrl], ratio }, tabId);
@@ -395,7 +397,7 @@
     }
 
     // 4.5) Gemini 自带下载链接（页面"下载"按钮的数据源，多为 blob 原图）
-    if (!blob && item.dlLink && item.id && hasTime()) {
+    if (!blob && wantOrig && item.dlLink && item.id && hasTime()) {
       try {
         const res = await sendToGemini({ type: 'GIDL_DL_LINK_DATA', id: item.id, link: item.dlLink }, tabId);
         if (res && res.ok && res.dataUrl) {
@@ -414,7 +416,7 @@
     // 5) 原生下载截获：触发 Gemini 自己的下载按钮（「下载完整尺寸的图片」），
     // hook 拦截它抓取的原图字节。内存图的主恢复通道，串行执行防字节错配。
     // 失败自动重试一次（首次点击时按钮可能尚未完全就绪）
-    if (!blob && hasTime() && item.id && (isMemorySrc || blobUrl)) {
+    if (!blob && wantOrig && hasTime() && item.id && (isMemorySrc || blobUrl)) {
       for (let attempt = 0; attempt < 2 && !blob && hasTime(); attempt++) {
         if (attempt) await new Promise((r) => setTimeout(r, 1500));
         let capErr = '';
